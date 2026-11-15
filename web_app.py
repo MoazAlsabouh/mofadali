@@ -10,8 +10,8 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "mofadala-secret-key-2026-auth-secure")
 
 # Admin credentials (configurable via Render Environment Variables)
-ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin@moazns.sy")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Admin@2027")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "mofadala.db")
@@ -1411,7 +1411,7 @@ def index():
         scanned_files=scanned_files,
         years_summary=years_summary,
         anomalies=anomalies,
-        username=session.get("username", "admin")
+        username=session.get("username", "admin@moazns.sy")
     )
 
 @app.route("/api/data")
