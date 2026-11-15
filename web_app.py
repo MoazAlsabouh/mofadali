@@ -2,9 +2,17 @@ import os
 import glob
 import re
 import sqlite3
-from flask import Flask, render_template_string, jsonify, request
+from functools import wraps
+from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for
 
 app = Flask(__name__)
+# Secret key for session signing
+app.secret_key = os.environ.get("SECRET_KEY", "mofadala-secret-key-2026-auth-secure")
+
+# Admin credentials (configurable via Render Environment Variables)
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "mofadala.db")
 
@@ -12,6 +20,16 @@ def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get("logged_in"):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "غير مصرح، يرجى تسجيل الدخول أولاً"}), 401
+            return redirect(url_for("login", next=request.path))
+        return f(*args, **kwargs)
+    return decorated_function
 
 def get_scanned_and_empty_files():
     """
@@ -44,7 +62,6 @@ def get_scanned_and_empty_files():
         else:
             count = 0
             
-        # الملفات الممسوحة ضوئياً المعروفة أو التي يقل رصيدها
         is_known_scanned = any(s in basename for s in [
             "معدلات أولى علمي2018", 
             "مفاضلة العلمي الأولى عام 2017", 
@@ -64,6 +81,132 @@ def get_scanned_and_empty_files():
     conn.close()
     return files_info
 
+def get_year_audit_data():
+    """
+    إحصائيات تفصيلية لكل سنة واكتشاف السجلات المشبوهة أو الشاذة لتسهيل التدقيق.
+    """
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    # تفاصيل السنوات
+    c.execute("""
+        SELECT 
+            year,
+            COUNT(*) as total_count,
+            SUM(CASE WHEN admission_type = 'عام' THEN 1 ELSE 0 END) as aam_count,
+            SUM(CASE WHEN admission_type = 'موازي' THEN 1 ELSE 0 END) as muwazi_count,
+            MIN(score) as min_score,
+            MAX(score) as max_score,
+            AVG(score) as avg_score
+        FROM admission_data
+        WHERE year IS NOT NULL
+        GROUP BY year
+        ORDER BY year DESC
+    """)
+    years_summary = [dict(r) for r in c.fetchall()]
+    
+    # فحص السجلات المشبوهة (شذوذ في العلامة، طول الاسم أكثر من 80 حرف نتيجة دمج أعمدة، أو علامة تساوي السنة)
+    c.execute("""
+        SELECT id, year, university, specialization, admission_type, is_final_result, score,
+            CASE 
+                WHEN score > 2500 THEN 'علامة أعلى من الحد الأقصى المعتاد (2400)'
+                WHEN score IN (2024, 2025, 2026) THEN 'العلامة مطابقة للعام الدراسي (خطأ استخراج)'
+                WHEN LENGTH(specialization) > 80 THEN 'اسم التخصص طويل جداً (احتمال دمج نصوص متعددة)'
+                WHEN score < 1000 THEN 'علامة متدنية بشكل غير معتاد'
+                ELSE 'تدقيق عام'
+            END as anomaly_reason
+        FROM admission_data
+        WHERE score > 2500 
+           OR score IN (2024, 2025, 2026)
+           OR LENGTH(specialization) > 80
+           OR score < 900
+        ORDER BY year DESC, id DESC
+    """)
+    anomalies = [dict(r) for r in c.fetchall()]
+    conn.close()
+    
+    return years_summary, anomalies
+
+# =============================================================================
+# TEMPLATES: LOGIN PAGE (DARK THEME)
+# =============================================================================
+LOGIN_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تسجيل الدخول - لوحة تنقيح المفاضلات</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Cairo', sans-serif; }</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4 selection:bg-emerald-500 selection:text-white">
+
+    <div class="max-w-md w-full">
+        <!-- Brand Header -->
+        <div class="text-center mb-8">
+            <div class="inline-flex p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-3xl mb-4 shadow-xl backdrop-blur-md">
+                <i class="fa-solid fa-shield-halved text-4xl text-emerald-400"></i>
+            </div>
+            <h1 class="text-2xl font-black text-white">بوابة الإدارة والتنقيح الآمنة</h1>
+            <p class="text-xs text-slate-400 mt-1.5">نظام إدارة وتنقيح بيانات المفاضلات الجامعية السورية (2014 - 2026)</p>
+        </div>
+
+        <!-- Login Card -->
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl p-7 shadow-2xl space-y-6">
+            {% if error %}
+            <div class="p-3.5 bg-rose-950/60 border border-rose-800 text-rose-300 rounded-2xl text-xs font-bold flex items-center gap-2">
+                <i class="fa-solid fa-circle-exclamation text-base"></i>
+                <span>{{ error }}</span>
+            </div>
+            {% endif %}
+
+            <form method="POST" action="/login" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-300 mb-1.5">اسم المستخدم</label>
+                    <div class="relative">
+                        <i class="fa-solid fa-user absolute right-3.5 top-3.5 text-slate-500 text-sm"></i>
+                        <input type="text" name="username" required autofocus placeholder="اسم المستخدم"
+                               class="w-full pr-10 pl-3 py-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-300 mb-1.5">كلمة المرور</label>
+                    <div class="relative">
+                        <i class="fa-solid fa-lock absolute right-3.5 top-3.5 text-slate-500 text-sm"></i>
+                        <input type="password" name="password" required placeholder="كلمة المرور"
+                               class="w-full pr-10 pl-3 py-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
+                    </div>
+                </div>
+
+                <div class="pt-2">
+                    <button type="submit" 
+                            class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-950/50 transition-all flex items-center justify-center gap-2 text-sm">
+                        <i class="fa-solid fa-right-to-bracket"></i>
+                        <span>تسجيل الدخول للمنظومة</span>
+                    </button>
+                </div>
+            </form>
+
+            <div class="pt-4 border-t border-slate-800/80 text-center">
+                <p class="text-[11px] text-slate-500">
+                    <i class="fa-solid fa-lock text-[10px] ml-1"></i>
+                    الوصول مقتصر على المشرفين المصرح لهم فقط.
+                </p>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
+"""
+
+# =============================================================================
+# TEMPLATES: MAIN APP (DARK THEME + YEAR CURATION HUB + MATRIX)
+# =============================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl" class="dark">
@@ -71,7 +214,7 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>لوحة تنقيح وإدارة بيانات المفاضلات الجامعية (2014 - 2026)</title>
-    <!-- Tailwind CSS CDN with dark mode config -->
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -80,7 +223,6 @@ HTML_TEMPLATE = """
                 extend: {
                     colors: {
                         brand: {
-                            50: '#ecfdf5',
                             500: '#10b981',
                             600: '#059669',
                             700: '#047857'
@@ -100,66 +242,79 @@ HTML_TEMPLATE = """
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
         body { font-family: 'Cairo', sans-serif; }
-        /* Custom scrollbars for dark mode */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #090d16;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #1e293b;
-            border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #334155;
-        }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #090d16; }
+        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #334155; }
     </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-emerald-500 selection:text-white">
 
     <!-- Header -->
     <header class="bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-950 text-white shadow-xl border-b border-slate-800/80 sticky top-0 z-40">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-col md:flex-row justify-between items-center gap-4">
             <div class="flex items-center gap-3">
-                <div class="bg-emerald-500/10 p-3 rounded-2xl backdrop-blur-md border border-emerald-500/30">
-                    <i class="fa-solid fa-graduation-cap text-3xl text-emerald-400"></i>
+                <div class="bg-emerald-500/10 p-2.5 rounded-2xl backdrop-blur-md border border-emerald-500/30">
+                    <i class="fa-solid fa-graduation-cap text-2xl sm:text-3xl text-emerald-400"></i>
                 </div>
                 <div>
-                    <h1 class="text-2xl font-black tracking-wide text-white">لوحة تنقيح وإدارة بيانات المفاضلات</h1>
-                    <p class="text-xs text-emerald-300/80 font-medium">مراجعة، تعديل يدوي، وإضافة السجلات غير المقروءة (2014 - 2026)</p>
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-xl sm:text-2xl font-black tracking-wide text-white">لوحة تنقيح وإدارة بيانات المفاضلات</h1>
+                        <span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold">نسخة آمنة</span>
+                    </div>
+                    <p class="text-xs text-emerald-300/80 font-medium">مراجعة شاملة، كشف الشذوذ، ومصفوفة المقارنة السنوية (2014 - 2026)</p>
                 </div>
             </div>
             
-            <div class="flex items-center gap-2">
-                <button onclick="openAddModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-emerald-950/50 transition-all flex items-center gap-2">
-                    <i class="fa-solid fa-plus-circle text-base"></i>
-                    <span>إضافة اختصاص يدوي</span>
+            <div class="flex items-center gap-2.5">
+                <button onclick="openAddModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-lg shadow-emerald-950/50 transition-all flex items-center gap-1.5">
+                    <i class="fa-solid fa-plus-circle text-sm"></i>
+                    <span>إضافة اختصاص</span>
                 </button>
 
-                <button onclick="exportCSV()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs px-3.5 py-2.5 rounded-xl border border-slate-700 transition-all flex items-center gap-1.5">
+                <button onclick="exportCSV()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs px-3 py-2 rounded-xl border border-slate-700 transition-all flex items-center gap-1.5">
                     <i class="fa-solid fa-file-excel text-emerald-400"></i>
                     <span>تصدير Excel</span>
                 </button>
+
+                <!-- User & Logout -->
+                <div class="flex items-center gap-1.5 bg-slate-950/80 border border-slate-800 px-3 py-1.5 rounded-xl text-xs">
+                    <i class="fa-solid fa-user-shield text-emerald-400"></i>
+                    <span class="text-slate-300 font-bold ml-2">{{ username }}</span>
+                    <a href="/logout" title="تسجيل الخروج" class="text-rose-400 hover:text-rose-300 p-1 hover:bg-rose-950/50 rounded-lg transition-colors">
+                        <i class="fa-solid fa-power-off"></i>
+                    </a>
+                </div>
             </div>
         </div>
     </header>
 
     <!-- Navigation Tabs -->
-    <div class="bg-slate-900/90 backdrop-blur border-b border-slate-800 shadow-sm sticky top-[73px] z-30">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-6 text-sm font-bold">
-            <button onclick="switchTab('data-tab')" id="btn-data-tab" class="py-3.5 border-b-2 border-emerald-500 text-emerald-400 flex items-center gap-2 transition-colors">
+    <div class="bg-slate-900/90 backdrop-blur border-b border-slate-800 shadow-sm sticky top-[69px] z-30">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-4 sm:gap-6 text-sm font-bold overflow-x-auto">
+            <button onclick="switchTab('data-tab')" id="btn-data-tab" class="py-3.5 border-b-2 border-emerald-500 text-emerald-400 flex items-center gap-2 transition-colors whitespace-nowrap">
                 <i class="fa-solid fa-table-list"></i>
                 <span>جدول السجلات والبيانات</span>
                 <span id="tabTotalBadge" class="bg-emerald-950 text-emerald-300 border border-emerald-800/80 text-xs px-2 py-0.5 rounded-full font-black">{{ stats.total }}</span>
             </button>
-            <button onclick="switchTab('manual-tab')" id="btn-manual-tab" class="py-3.5 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 transition-colors">
+
+            <button onclick="switchTab('audit-tab')" id="btn-audit-tab" class="py-3.5 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 transition-colors whitespace-nowrap">
+                <i class="fa-solid fa-magnifying-glass-chart"></i>
+                <span>مركز تدقيق ومصفوفة السنوات</span>
+                {% if anomalies|length > 0 %}
+                <span class="bg-rose-950 text-rose-300 border border-rose-800/80 text-xs px-2 py-0.5 rounded-full font-black animate-pulse">
+                    {{ anomalies|length }} تدقيق مطلوب
+                </span>
+                {% endif %}
+            </button>
+
+            <button onclick="switchTab('manual-tab')" id="btn-manual-tab" class="py-3.5 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 transition-colors whitespace-nowrap">
                 <i class="fa-solid fa-file-circle-question"></i>
                 <span>مساعد الملفات الممسوحة ضوئياً</span>
                 <span class="bg-amber-950 text-amber-300 border border-amber-800/80 text-xs px-2 py-0.5 rounded-full font-black">4 ملفات</span>
             </button>
-            <button onclick="switchTab('chart-tab')" id="btn-chart-tab" class="py-3.5 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 transition-colors">
+
+            <button onclick="switchTab('chart-tab')" id="btn-chart-tab" class="py-3.5 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 transition-colors whitespace-nowrap">
                 <i class="fa-solid fa-chart-line"></i>
                 <span>المخطط البياني والتطور</span>
             </button>
@@ -171,6 +326,24 @@ HTML_TEMPLATE = """
 
         <!-- TAB 1: DATA TABLE -->
         <div id="data-tab" class="space-y-6">
+
+            <!-- Fast Year Selector Pills (شريط السنوات السريع) -->
+            <div class="bg-slate-900/80 border border-slate-800 p-3 rounded-2xl shadow-sm flex items-center gap-2 overflow-x-auto">
+                <span class="text-xs font-bold text-slate-400 ml-2 whitespace-nowrap flex items-center gap-1">
+                    <i class="fa-solid fa-calendar-days text-emerald-400"></i> السنوات:
+                </span>
+                <button onclick="quickSelectYear('')" id="pill-all" class="year-pill px-3 py-1 rounded-xl text-xs font-bold bg-emerald-600 text-white transition-all whitespace-nowrap">
+                    الكل ({{ stats.total }})
+                </button>
+                {% for ys in years_summary %}
+                <button onclick="quickSelectYear('{{ ys.year }}')" id="pill-{{ ys.year }}" 
+                        class="year-pill px-2.5 py-1 rounded-xl text-xs font-bold bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-all whitespace-nowrap flex items-center gap-1.5">
+                    <span>{{ ys.year }}</span>
+                    <span class="text-[10px] px-1.5 py-0.2 rounded-md bg-slate-800 text-slate-400">{{ ys.total_count }}</span>
+                </button>
+                {% endfor %}
+            </div>
+
             <!-- Filter Controls -->
             <div class="bg-slate-900 p-5 rounded-2xl shadow-lg border border-slate-800 space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
@@ -241,7 +414,7 @@ HTML_TEMPLATE = """
                         <span id="filteredCountBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800/80 font-bold"></span>
                     </div>
                     <div class="text-xs text-slate-400">
-                        يمكنك تعديل أي علامة أو حذف أي سطر مباشرة من أزرار الإجراءات
+                        انقر مرتين على أي علامة لتعديلها السريع مباشرة
                     </div>
                 </div>
 
@@ -278,7 +451,130 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- TAB 2: MANUAL / SCANNED FILES ASSISTANT -->
+        <!-- TAB 2: AUDIT & MATRIX (مركز تدقيق ومصفوفة السنوات) -->
+        <div id="audit-tab" class="hidden space-y-6">
+
+            <!-- Section 1: Anomaly Detector (كاشف الشذوذ والأخطاء) -->
+            {% if anomalies|length > 0 %}
+            <div class="bg-gradient-to-r from-rose-950/40 via-slate-900 to-slate-900 border border-rose-800/60 p-5 rounded-2xl space-y-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="p-2.5 bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-xl text-lg">
+                            <i class="fa-solid fa-triangle-exclamation"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-rose-300 text-base">سجلات مشبوهة تحتاج لتدقيق فوري ({{ anomalies|length }} سجل)</h3>
+                            <p class="text-xs text-rose-200/80">تم الكشف عن نصوص مدمجة أو درجات غير مطابقة للمألوف (مثل درجات تطابق رقم العام الدراسي 2025/2026 أو علامات فوق 2400).</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto bg-slate-950/80 rounded-xl border border-slate-800">
+                    <table class="w-full text-right text-xs">
+                        <thead class="bg-slate-900 text-slate-400 border-b border-slate-800 font-bold">
+                            <tr>
+                                <th class="py-2.5 px-3">السنة</th>
+                                <th class="py-2.5 px-3">الجامعة</th>
+                                <th class="py-2.5 px-3">الاختصاص</th>
+                                <th class="py-2.5 px-3 text-center">الدرجة</th>
+                                <th class="py-2.5 px-3">سبب الاشتباه</th>
+                                <th class="py-2.5 px-3 text-center">إجراء سريع</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800/60">
+                            {% for a in anomalies %}
+                            <tr class="hover:bg-slate-800/40">
+                                <td class="py-2.5 px-3 font-bold text-slate-200">{{ a.year }}</td>
+                                <td class="py-2.5 px-3 text-slate-300">{{ a.university }}</td>
+                                <td class="py-2.5 px-3 text-slate-300 max-w-xs truncate" title="{{ a.specialization }}">{{ a.specialization }}</td>
+                                <td class="py-2.5 px-3 text-center font-black text-rose-400">{{ a.score }}</td>
+                                <td class="py-2.5 px-3 text-amber-300 font-medium">{{ a.anomaly_reason }}</td>
+                                <td class="py-2.5 px-3 text-center">
+                                    <div class="flex items-center justify-center gap-1.5">
+                                        <button onclick="openEditModal({{ a.id }})" class="p-1 text-slate-400 hover:text-emerald-400">
+                                            <i class="fa-solid fa-pen"></i>
+                                        </button>
+                                        <button onclick="deleteRecord({{ a.id }})" class="p-1 text-slate-400 hover:text-rose-400">
+                                            <i class="fa-solid fa-trash-can"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Section 2: Year Health Cards (بطاقات فحص وتغطية السنوات) -->
+            <div class="space-y-3">
+                <h3 class="font-bold text-slate-200 text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-calendar-check text-emerald-400"></i>
+                    حالة تغطية وجودة البيانات لكل سنة دراسية (2014 - 2026)
+                </h3>
+
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                    {% for ys in years_summary %}
+                    <div class="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl space-y-2 hover:border-slate-700 transition-all">
+                        <div class="flex items-center justify-between">
+                            <span class="text-base font-black text-emerald-400">{{ ys.year }}</span>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-950 text-slate-400 border border-slate-800">
+                                {{ ys.total_count }} سجل
+                            </span>
+                        </div>
+                        <div class="flex items-center justify-between text-xs text-slate-300 border-t border-slate-800/80 pt-2">
+                            <span>عام: <strong class="text-blue-400">{{ ys.aam_count }}</strong></span>
+                            <span>موازي: <strong class="text-purple-400">{{ ys.muwazi_count }}</strong></span>
+                        </div>
+                        <div class="text-[10px] text-slate-400 flex items-center justify-between">
+                            <span>المدى:</span>
+                            <span>{{ ys.min_score|round(0) }} - {{ ys.max_score|round(0) }}</span>
+                        </div>
+                        <button onclick="quickFilterFromCard('{{ ys.year }}')" class="w-full py-1 text-[11px] font-bold bg-slate-950 hover:bg-emerald-950 text-slate-400 hover:text-emerald-300 border border-slate-800 rounded-lg transition-colors">
+                            تنقيح بيانات {{ ys.year }}
+                        </button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Section 3: Comparative Matrix (مصفوفة المقارنة المتقاطعة للسنوات) -->
+            <div class="bg-slate-900 rounded-2xl shadow-lg border border-slate-800 p-5 space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div>
+                        <h3 class="font-bold text-slate-200 text-sm flex items-center gap-2">
+                            <i class="fa-solid fa-table-cells text-emerald-400"></i>
+                            مصفوفة مقارنة التخصصات عبر السنوات جنباً إلى جنب
+                        </h3>
+                        <p class="text-xs text-slate-400 mt-0.5">يمكنك مقارنة درجات نفس الاختصاص في كافة الجامعات عبر كل السنوات واكتشاف الفراغات بنقرة واحدة</p>
+                    </div>
+                    
+                    <div class="flex items-center gap-2">
+                        <select id="matrixTypeSelect" onchange="loadMatrix()" class="text-xs font-bold bg-slate-950 text-slate-200 border border-slate-800 rounded-xl p-2 focus:ring-1 focus:ring-emerald-500">
+                            <option value="عام">القبول العام فقط</option>
+                            <option value="موازي">الموازي فقط</option>
+                        </select>
+                        <input type="text" id="matrixSearchInput" placeholder="تصفية اختصاص..." oninput="filterMatrixRows()" 
+                               class="text-xs bg-slate-950 text-slate-200 border border-slate-800 rounded-xl px-3 py-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none">
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-right text-xs">
+                        <thead id="matrixHead" class="bg-slate-950/90 text-slate-300 font-black border-b border-slate-800">
+                            <!-- Dynamic Matrix Header -->
+                        </thead>
+                        <tbody id="matrixBody" class="divide-y divide-slate-800/60 font-mono">
+                            <!-- Dynamic Matrix Body -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- TAB 3: MANUAL / SCANNED FILES ASSISTANT -->
         <div id="manual-tab" class="hidden space-y-6">
             <div class="bg-gradient-to-r from-amber-950/40 to-slate-900 border border-amber-800/60 p-5 rounded-2xl">
                 <div class="flex items-start gap-3">
@@ -351,7 +647,7 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- TAB 3: CHART -->
+        <!-- TAB 4: CHART -->
         <div id="chart-tab" class="hidden space-y-6">
             <div class="bg-slate-900 p-6 rounded-2xl shadow-lg border border-slate-800">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
@@ -479,6 +775,7 @@ HTML_TEMPLATE = """
         let currentPage = 1;
         const pageSize = 20;
         let chartInstance = null;
+        let matrixCache = null;
 
         // Custom SweetAlert2 Dark Theme Defaults
         const DarkSwal = Swal.mixin({
@@ -507,21 +804,51 @@ HTML_TEMPLATE = """
         }
 
         function switchTab(tabId) {
-            ['data-tab', 'manual-tab', 'chart-tab'].forEach(id => {
-                document.getElementById(id).classList.add('hidden');
+            ['data-tab', 'audit-tab', 'manual-tab', 'chart-tab'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
                 const btn = document.getElementById(`btn-${id}`);
-                btn.classList.remove('border-emerald-500', 'text-emerald-400');
-                btn.classList.add('border-transparent', 'text-slate-400');
+                if (btn) {
+                    btn.classList.remove('border-emerald-500', 'text-emerald-400');
+                    btn.classList.add('border-transparent', 'text-slate-400');
+                }
             });
 
-            document.getElementById(tabId).classList.remove('hidden');
+            const activeContent = document.getElementById(tabId);
+            if (activeContent) activeContent.classList.remove('hidden');
             const activeBtn = document.getElementById(`btn-${tabId}`);
-            activeBtn.classList.remove('border-transparent', 'text-slate-400');
-            activeBtn.classList.add('border-emerald-500', 'text-emerald-400');
+            if (activeBtn) {
+                activeBtn.classList.remove('border-transparent', 'text-slate-400');
+                activeBtn.classList.add('border-emerald-500', 'text-emerald-400');
+            }
 
             if (tabId === 'chart-tab') {
                 setTimeout(updateChart, 50);
+            } else if (tabId === 'audit-tab') {
+                if (!matrixCache) loadMatrix();
             }
+        }
+
+        // Fast Year Quick Pill Filter
+        function quickSelectYear(year) {
+            document.querySelectorAll('.year-pill').forEach(p => {
+                p.classList.remove('bg-emerald-600', 'text-white');
+                p.classList.add('bg-slate-950', 'text-slate-300');
+            });
+
+            const activePill = document.getElementById(year ? `pill-${year}` : 'pill-all');
+            if (activePill) {
+                activePill.classList.remove('bg-slate-950', 'text-slate-300');
+                activePill.classList.add('bg-emerald-600', 'text-white');
+            }
+
+            document.getElementById('yearSelect').value = year;
+            applyFilters();
+        }
+
+        function quickFilterFromCard(year) {
+            switchTab('data-tab');
+            quickSelectYear(year);
         }
 
         function applyFilters() {
@@ -550,7 +877,7 @@ HTML_TEMPLATE = """
             document.getElementById('uniSelect').value = '';
             document.getElementById('typeSelect').value = '';
             document.getElementById('statusSelect').value = '';
-            applyFilters();
+            quickSelectYear('');
         }
 
         function renderTable() {
@@ -590,10 +917,15 @@ HTML_TEMPLATE = """
                         <td class="py-3 px-4 text-slate-200 font-medium">${r.specialization}</td>
                         <td class="py-3 px-3 text-center">${typeBadge}</td>
                         <td class="py-3 px-3 text-center">${statusBadge}</td>
-                        <td class="py-3 px-3 text-center font-black text-emerald-400 text-base">${r.score}</td>
+                        <td class="py-3 px-3 text-center">
+                            <span onclick="inlineEditScore(${r.id}, ${r.score})" title="انقر لتعديل العلامة فورياً" 
+                                  class="cursor-pointer font-black text-emerald-400 hover:text-emerald-300 text-base px-2 py-1 rounded-lg hover:bg-slate-800 transition-colors">
+                                ${r.score}
+                            </span>
+                        </td>
                         <td class="py-3 px-3 text-center">
                             <div class="flex items-center justify-center gap-1.5">
-                                <button onclick="openEditModal(${r.id})" title="تعديل السطر" class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-950/60 rounded-lg transition-colors">
+                                <button onclick="openEditModal(${r.id})" title="تعديل السطر بالكامل" class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-950/60 rounded-lg transition-colors">
                                     <i class="fa-solid fa-pen text-xs"></i>
                                 </button>
                                 <button onclick="deleteRecord(${r.id})" title="حذف السطر" class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/60 rounded-lg transition-colors">
@@ -626,6 +958,138 @@ HTML_TEMPLATE = """
         function goToPage(page) {
             currentPage = page;
             renderTable();
+        }
+
+        // Quick Inline Score Edit
+        async function inlineEditScore(id, oldScore) {
+            const { value: newScore } = await DarkSwal.fire({
+                title: 'تعديل سريع للعلامة',
+                input: 'number',
+                inputLabel: 'أدخل العلامة أو النسبة الجديدة:',
+                inputValue: oldScore,
+                showCancelButton: true,
+                inputValidator: (val) => {
+                    if (!val || val <= 0) return 'يرجى إدخال علامة صحيحة';
+                }
+            });
+
+            if (newScore && parseFloat(newScore) !== oldScore) {
+                const rec = allData.find(r => r.id === id);
+                if (!rec) return;
+
+                const payload = {
+                    year: rec.year,
+                    admission_type: rec.admission_type,
+                    university: rec.university,
+                    specialization: rec.specialization,
+                    is_final_result: rec.is_final_result,
+                    score: parseFloat(newScore)
+                };
+
+                const res = await fetch(`/api/records/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const resJson = await res.json();
+                if (resJson.success) {
+                    DarkSwal.fire({ title: 'تم التحديث!', icon: 'success', timer: 1000, showConfirmButton: false });
+                    await loadData();
+                    updateChart();
+                    if (matrixCache) loadMatrix();
+                }
+            }
+        }
+
+        // ==========================================
+        // Cross-Year Comparative Matrix Logic
+        // ==========================================
+        async function loadMatrix() {
+            const type = document.getElementById('matrixTypeSelect').value;
+            try {
+                const res = await fetch(`/api/matrix?type=${encodeURIComponent(type)}`);
+                matrixCache = await res.json();
+                renderMatrix();
+            } catch (err) {
+                console.error("Matrix error:", err);
+            }
+        }
+
+        function filterMatrixRows() {
+            renderMatrix();
+        }
+
+        function renderMatrix() {
+            if (!matrixCache) return;
+            const searchVal = document.getElementById('matrixSearchInput').value.trim().toLowerCase();
+            const { years, rows } = matrixCache;
+
+            // Render Header
+            let headHtml = `
+                <tr>
+                    <th class="py-3 px-3 text-right">الجامعة والاختصاص</th>
+            `;
+            years.forEach(y => {
+                headHtml += `<th class="py-3 px-2 text-center text-xs font-bold text-slate-300 border-r border-slate-800/80">${y}</th>`;
+            });
+            headHtml += `</tr>`;
+            document.getElementById('matrixHead').innerHTML = headHtml;
+
+            // Render Rows
+            const filteredRows = rows.filter(r => {
+                if (!searchVal) return true;
+                return r.university.toLowerCase().includes(searchVal) || r.specialization.toLowerCase().includes(searchVal);
+            });
+
+            let bodyHtml = '';
+            filteredRows.forEach(r => {
+                bodyHtml += `
+                    <tr class="hover:bg-slate-800/30">
+                        <td class="py-2.5 px-3">
+                            <span class="font-bold text-slate-200 block text-xs">${r.specialization}</span>
+                            <span class="text-[10px] text-slate-400 block">${r.university}</span>
+                        </td>
+                `;
+
+                years.forEach(y => {
+                    const cell = r.scores[y];
+                    if (cell) {
+                        bodyHtml += `
+                            <td class="py-2.5 px-2 text-center border-r border-slate-800/60">
+                                <span onclick="inlineEditScore(${cell.id}, ${cell.score})" title="تعديل" 
+                                      class="cursor-pointer font-bold text-emerald-400 hover:text-emerald-300 text-xs px-1.5 py-0.5 rounded bg-emerald-950/40 hover:bg-emerald-900 border border-emerald-800/60 block">
+                                    ${cell.score}
+                                </span>
+                            </td>
+                        `;
+                    } else {
+                        const currentType = document.getElementById('matrixTypeSelect').value;
+                        bodyHtml += `
+                            <td class="py-2.5 px-2 text-center border-r border-slate-800/60">
+                                <button onclick="quickAddFromMatrix('${y}', '${encodeURIComponent(r.university)}', '${encodeURIComponent(r.specialization)}', '${currentType}')" 
+                                        title="إضافة علامة لسنة ${y}" 
+                                        class="text-[10px] text-slate-600 hover:text-emerald-400 p-1 hover:bg-slate-800 rounded transition-colors">
+                                    <i class="fa-solid fa-plus"></i>
+                                </button>
+                            </td>
+                        `;
+                    }
+                });
+
+                bodyHtml += `</tr>`;
+            });
+
+            document.getElementById('matrixBody').innerHTML = bodyHtml || `<tr><td colspan="${years.length + 1}" class="py-8 text-center text-slate-500">لا توجد اختصاصات مطابقة للبحث</td></tr>`;
+        }
+
+        function quickAddFromMatrix(year, uniEnc, specEnc, admType) {
+            openAddModal();
+            document.getElementById('formYear').value = year;
+            document.getElementById('formUniversity').value = decodeURIComponent(uniEnc);
+            document.getElementById('formSpec').value = decodeURIComponent(specEnc);
+            document.getElementById('formAdmType').value = admType;
+            document.getElementById('formIsFinal').value = '1';
+            document.getElementById('formScore').focus();
         }
 
         // Modal Operations (Add / Edit)
@@ -700,6 +1164,7 @@ HTML_TEMPLATE = """
                     });
                     await loadData();
                     updateChart();
+                    if (matrixCache) loadMatrix();
                 } else {
                     DarkSwal.fire('خطأ', result.error || 'تعذر حفظ السجل', 'error');
                 }
@@ -734,6 +1199,7 @@ HTML_TEMPLATE = """
                     });
                     await loadData();
                     updateChart();
+                    if (matrixCache) loadMatrix();
                 }
             } catch (err) {
                 DarkSwal.fire('خطأ', 'تعذر حذف السجل', 'error');
@@ -886,10 +1352,40 @@ HTML_TEMPLATE = """
 """
 
 # =============================================================================
-# REST API Endpoints for Full CRUD
+# AUTHENTICATION & LOGIN ROUTES
+# =============================================================================
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("logged_in"):
+        return redirect(url_for("index"))
+
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session["logged_in"] = True
+            session["username"] = username
+            next_url = request.args.get("next") or url_for("index")
+            return redirect(next_url)
+        else:
+            error = "اسم المستخدم أو كلمة المرور غير صحيحة، يرجى المحاولة ثانية."
+
+    return render_template_string(LOGIN_TEMPLATE, error=error)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+# =============================================================================
+# REST API Endpoints for Full CRUD & Year Matrix
 # =============================================================================
 
 @app.route("/")
+@login_required
 def index():
     conn = get_db_connection()
     c = conn.cursor()
@@ -904,11 +1400,22 @@ def index():
     conn.close()
     
     scanned_files = get_scanned_and_empty_files()
+    years_summary, anomalies = get_year_audit_data()
     
     stats = {"total": total}
-    return render_template_string(HTML_TEMPLATE, stats=stats, years=years, universities=universities, scanned_files=scanned_files)
+    return render_template_string(
+        HTML_TEMPLATE, 
+        stats=stats, 
+        years=years, 
+        universities=universities, 
+        scanned_files=scanned_files,
+        years_summary=years_summary,
+        anomalies=anomalies,
+        username=session.get("username", "admin")
+    )
 
 @app.route("/api/data")
+@login_required
 def api_data():
     conn = get_db_connection()
     c = conn.cursor()
@@ -917,7 +1424,56 @@ def api_data():
     conn.close()
     return jsonify(rows)
 
+@app.route("/api/matrix")
+@login_required
+def api_matrix():
+    adm_type = request.args.get("type", "عام")
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    # قائمة السنوات مرتبة تنازلياً
+    c.execute("SELECT DISTINCT year FROM admission_data WHERE year IS NOT NULL ORDER BY year DESC")
+    years = [r[0] for r in c.fetchall()]
+    
+    # جلب السجلات للنوع المختار
+    c.execute("""
+        SELECT id, year, university, specialization, score 
+        FROM admission_data 
+        WHERE admission_type = ? AND is_final_result = 1
+        ORDER BY university, specialization, year DESC
+    """, (adm_type,))
+    records = c.fetchall()
+    conn.close()
+    
+    # تجميع النتائج حسب الجامعة والتخصص
+    matrix_map = {}
+    for r in records:
+        key = (r["university"], r["specialization"])
+        if key not in matrix_map:
+            matrix_map[key] = {}
+        matrix_map[key][r["year"]] = {
+            "id": r["id"],
+            "score": r["score"]
+        }
+        
+    rows = []
+    for (uni, spec), scores in matrix_map.items():
+        rows.append({
+            "university": uni,
+            "specialization": spec,
+            "scores": scores
+        })
+        
+    # فرز النتائج حسب اسم الجامعة ثم التخصص
+    rows.sort(key=lambda x: (x["university"], x["specialization"]))
+    
+    return jsonify({
+        "years": years,
+        "rows": rows
+    })
+
 @app.route("/api/records", methods=["POST"])
+@login_required
 def api_add_record():
     data = request.json
     if not data or "year" not in data or "score" not in data:
@@ -942,6 +1498,7 @@ def api_add_record():
     return jsonify({"success": True, "id": new_id})
 
 @app.route("/api/records/<int:rec_id>", methods=["PUT"])
+@login_required
 def api_update_record(rec_id):
     data = request.json
     if not data:
@@ -967,6 +1524,7 @@ def api_update_record(rec_id):
     return jsonify({"success": True})
 
 @app.route("/api/records/<int:rec_id>", methods=["DELETE"])
+@login_required
 def api_delete_record(rec_id):
     conn = get_db_connection()
     c = conn.cursor()
@@ -977,6 +1535,7 @@ def api_delete_record(rec_id):
 
 @app.route("/healthz")
 def healthz():
+    """Health check endpoint for Render (Unauthenticated)"""
     return jsonify({"status": "healthy"}), 200
 
 if __name__ == "__main__":
