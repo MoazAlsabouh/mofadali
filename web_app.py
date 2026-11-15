@@ -3,7 +3,7 @@ import glob
 import re
 import sqlite3
 from functools import wraps
-from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for
+from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for, send_file
 
 app = Flask(__name__)
 # Secret key for session signing
@@ -316,6 +316,11 @@ HTML_TEMPLATE = """
                     <i class="fa-solid fa-file-excel text-emerald-400"></i>
                     <span>تصدير Excel</span>
                 </button>
+
+                <a href="/api/backup-db" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs px-3 py-2 rounded-xl border border-slate-700 transition-all flex items-center gap-1.5" title="تنزيل نسخة ملف قاعدة البيانات mofadala.db الحالية لجهازك">
+                    <i class="fa-solid fa-database text-amber-400"></i>
+                    <span>نسخة DB</span>
+                </a>
 
                 <!-- User & Logout -->
                 <div class="flex items-center gap-1.5 bg-slate-950/80 border border-slate-800 px-3 py-1.5 rounded-xl text-xs">
@@ -1963,6 +1968,22 @@ def api_delete_record(rec_id):
     conn.commit()
     conn.close()
     return jsonify({"success": True})
+
+@app.after_request
+def add_cache_control(response):
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+@app.route("/api/backup-db")
+@login_required
+def api_backup_db():
+    """تحميل نسخة احتياطية من ملف قاعدة البيانات mofadala.db فورياً"""
+    if os.path.exists(DB_PATH):
+        return send_file(DB_PATH, as_attachment=True, download_name="mofadala.db")
+    return jsonify({"error": "ملف قاعدة البيانات غير موجود"}), 404
 
 @app.route("/healthz")
 def healthz():
