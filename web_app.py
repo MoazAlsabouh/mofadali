@@ -1727,8 +1727,25 @@ def index():
     years = [row[0] for row in c.fetchall()]
     
     c.execute("SELECT DISTINCT university FROM admission_data WHERE university IS NOT NULL AND university != '' ORDER BY university")
-    universities = [row[0] for row in c.fetchall()]
+    db_unis = [row[0] for row in c.fetchall()]
     conn.close()
+    
+    # قائمة الجامعات المعتمدة مع إضافة خيارات: حمص، اللاذقية، وإدلب
+    base_unis = [
+        "جامعة دمشق",
+        "جامعة حلب",
+        "جامعة حمص",
+        "جامعة اللاذقية",
+        "جامعة إدلب",
+        "جامعة حماة",
+        "جامعة طرطوس",
+        "جامعة الفرات",
+        "جامعة دمشق (فرع درعا)"
+    ]
+    all_unis = set(base_unis) | set(db_unis)
+    all_unis.discard("جامعة تشرين")
+    all_unis.discard("جامعة البعث")
+    universities = sorted(list(all_unis))
     
     scanned_files = get_scanned_and_empty_files()
     years_summary, anomalies = get_year_audit_data()
