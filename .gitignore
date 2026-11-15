@@ -1,0 +1,23 @@
+# تجاهل ملفات الـ PDF بناءً على طلبك
+*.pdf
+
+# ملفات بايثون المؤقتة
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# البيئات الافتراضية
+env/
+venv/
+.venv/
+ENV/
+
+# بيئات التطوير والنظام
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
