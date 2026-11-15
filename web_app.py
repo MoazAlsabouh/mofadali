@@ -21,6 +21,37 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def init_db():
+    """تهيئة الجداول الإضافية والأعمدة الجديدة عند بدء تشغيل التطبيق"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    # جدول المجاميع العامة لكل سنة
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS year_settings (
+            year INTEGER PRIMARY KEY,
+            max_score REAL DEFAULT 2400
+        )
+    """)
+    
+    # فحص عمود round_type في جدول admission_data
+    cols = [r[1] for r in c.execute("PRAGMA table_info(admission_data)").fetchall()]
+    if "round_type" not in cols:
+        c.execute("ALTER TABLE admission_data ADD COLUMN round_type TEXT DEFAULT 'إعلان نتيجة'")
+        c.execute("UPDATE admission_data SET round_type = 'مفاضلة أولى' WHERE is_final_result = 0")
+        c.execute("UPDATE admission_data SET round_type = 'إعلان نتيجة' WHERE is_final_result = 1 OR round_type IS NULL")
+        
+    # ملء السنوات غير الموجودة في year_settings بقيمة افتراضية 2400
+    c.execute("SELECT DISTINCT year FROM admission_data WHERE year IS NOT NULL")
+    existing_years = [r[0] for r in c.fetchall()]
+    for y in existing_years:
+        c.execute("INSERT OR IGNORE INTO year_settings (year, max_score) VALUES (?, 2400)", (y,))
+        
+    conn.commit()
+    conn.close()
+
+# تنفيذ التهيئة
+init_db()
+
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -54,8 +85,8 @@ def get_scanned_and_empty_files():
             adm_type = "موازي"
             
         is_final = any(ind in norm_name for ind in ["نتائج", "حدود", "معدلات", "ثانية", "الثانية", "تانية"])
+        round_type = "إعلان نتيجة" if is_final else "مفاضلة أولى"
         
-        # فحص هل توجد سجلات مسجلة لهذه السنة وهذا النوع في قاعدة البيانات
         if year:
             c.execute("SELECT COUNT(*) FROM admission_data WHERE year = ? AND admission_type = ?", (year, adm_type))
             count = c.fetchone()[0]
@@ -73,6 +104,7 @@ def get_scanned_and_empty_files():
             "filename": basename,
             "year": year,
             "admission_type": adm_type,
+            "round_type": round_type,
             "is_final_result": is_final,
             "existing_records": count,
             "is_scanned": is_known_scanned
@@ -83,31 +115,34 @@ def get_scanned_and_empty_files():
 
 def get_year_audit_data():
     """
-    إحصائيات تفصيلية لكل سنة واكتشاف السجلات المشبوهة أو الشاذة لتسهيل التدقيق.
+    إحصائيات تفصيلية لكل سنة تشمل المجموع العام للثانوية، وحالة القبول الأول أو إعلان النتيجة، واكتشاف الشذوذ.
     """
     conn = get_db_connection()
     c = conn.cursor()
     
-    # تفاصيل السنوات
     c.execute("""
         SELECT 
-            year,
+            a.year,
             COUNT(*) as total_count,
-            SUM(CASE WHEN admission_type = 'عام' THEN 1 ELSE 0 END) as aam_count,
-            SUM(CASE WHEN admission_type = 'موازي' THEN 1 ELSE 0 END) as muwazi_count,
-            MIN(score) as min_score,
-            MAX(score) as max_score,
-            AVG(score) as avg_score
-        FROM admission_data
-        WHERE year IS NOT NULL
-        GROUP BY year
-        ORDER BY year DESC
+            SUM(CASE WHEN a.admission_type = 'عام' THEN 1 ELSE 0 END) as aam_count,
+            SUM(CASE WHEN a.admission_type = 'موازي' THEN 1 ELSE 0 END) as muwazi_count,
+            SUM(CASE WHEN a.round_type = 'مفاضلة أولى' THEN 1 ELSE 0 END) as first_round_count,
+            SUM(CASE WHEN a.round_type = 'إعلان نتيجة' THEN 1 ELSE 0 END) as result_count,
+            MIN(a.score) as min_score,
+            MAX(a.score) as max_score,
+            AVG(a.score) as avg_score,
+            COALESCE(s.max_score, 2400) as year_max_score
+        FROM admission_data a
+        LEFT JOIN year_settings s ON a.year = s.year
+        WHERE a.year IS NOT NULL
+        GROUP BY a.year
+        ORDER BY a.year DESC
     """)
     years_summary = [dict(r) for r in c.fetchall()]
     
-    # فحص السجلات المشبوهة (شذوذ في العلامة، طول الاسم أكثر من 80 حرف نتيجة دمج أعمدة، أو علامة تساوي السنة)
+    # فحص السجلات المشبوهة
     c.execute("""
-        SELECT id, year, university, specialization, admission_type, is_final_result, score,
+        SELECT id, year, university, specialization, admission_type, round_type, is_final_result, score,
             CASE 
                 WHEN score > 2500 THEN 'علامة أعلى من الحد الأقصى المعتاد (2400)'
                 WHEN score IN (2024, 2025, 2026) THEN 'العلامة مطابقة للعام الدراسي (خطأ استخراج)'
@@ -168,7 +203,7 @@ LOGIN_TEMPLATE = """
                     <label class="block text-xs font-bold text-slate-300 mb-1.5">اسم المستخدم</label>
                     <div class="relative">
                         <i class="fa-solid fa-user absolute right-3.5 top-3.5 text-slate-500 text-sm"></i>
-                        <input type="text" name="username" required autofocus placeholder="اسم المستخدم"
+                        <input type="text" name="username" required autofocus placeholder="admin@moazns.sy"
                                class="w-full pr-10 pl-3 py-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                     </div>
                 </div>
@@ -205,7 +240,7 @@ LOGIN_TEMPLATE = """
 """
 
 # =============================================================================
-# TEMPLATES: MAIN APP (DARK THEME + YEAR CURATION HUB + MATRIX)
+# TEMPLATES: MAIN APP (DARK THEME + YEAR MAX SCORE + PERCENTAGES + ROUND TYPE)
 # =============================================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -260,13 +295,18 @@ HTML_TEMPLATE = """
                 <div>
                     <div class="flex items-center gap-2">
                         <h1 class="text-xl sm:text-2xl font-black tracking-wide text-white">لوحة تنقيح وإدارة بيانات المفاضلات</h1>
-                        <span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold">نسخة آمنة</span>
+                        <span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold">حساب النسب المئوية %</span>
                     </div>
-                    <p class="text-xs text-emerald-300/80 font-medium">مراجعة شاملة، كشف الشذوذ، ومصفوفة المقارنة السنوية (2014 - 2026)</p>
+                    <p class="text-xs text-emerald-300/80 font-medium">مفاضلة أولى / إعلان نتيجة، والمجموع العام لكل سنة (2014 - 2026)</p>
                 </div>
             </div>
             
             <div class="flex items-center gap-2.5">
+                <button onclick="openYearSettingsModal()" class="bg-amber-600/90 hover:bg-amber-500 text-white font-bold text-xs px-3 py-2 rounded-xl border border-amber-500/40 shadow-lg shadow-amber-950/40 transition-all flex items-center gap-1.5" title="تحديد وتعديل المجموع العام للشهادة الثانوية لكل سنة">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>المجاميع السنوية %</span>
+                </button>
+
                 <button onclick="openAddModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-lg shadow-emerald-950/50 transition-all flex items-center gap-1.5">
                     <i class="fa-solid fa-plus-circle text-sm"></i>
                     <span>إضافة اختصاص</span>
@@ -337,9 +377,11 @@ HTML_TEMPLATE = """
                 </button>
                 {% for ys in years_summary %}
                 <button onclick="quickSelectYear('{{ ys.year }}')" id="pill-{{ ys.year }}" 
-                        class="year-pill px-2.5 py-1 rounded-xl text-xs font-bold bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-all whitespace-nowrap flex items-center gap-1.5">
+                        class="year-pill px-2.5 py-1 rounded-xl text-xs font-bold bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-all whitespace-nowrap flex items-center gap-1.5"
+                        title="المجموع العام لسنة {{ ys.year }}: {{ ys.year_max_score }}">
                     <span>{{ ys.year }}</span>
                     <span class="text-[10px] px-1.5 py-0.2 rounded-md bg-slate-800 text-slate-400">{{ ys.total_count }}</span>
+                    <span class="text-[10px] text-amber-400 font-normal">/{{ ys.year_max_score|int }}</span>
                 </button>
                 {% endfor %}
             </div>
@@ -396,11 +438,11 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-slate-400 mb-1">حالة الوثيقة</label>
-                        <select id="statusSelect" onchange="applyFilters()" class="w-full p-2 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
-                            <option value="">الكل (شروط + نتائج فعلية)</option>
-                            <option value="1">الحدود الدنيا والنتائج الفعلية</option>
-                            <option value="0">إعلانات شروط التقدم المبدئية</option>
+                        <label class="block text-xs font-bold text-slate-400 mb-1">نوع الإعلان / المرحلة</label>
+                        <select id="roundSelect" onchange="applyFilters()" class="w-full p-2 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
+                            <option value="">الكل (مفاضلة أولى + إعلان نتيجة)</option>
+                            <option value="مفاضلة أولى">مفاضلة أولى (شروط التقدم)</option>
+                            <option value="إعلان نتيجة">إعلان نتيجة (الحدود الدنيا الفعلية)</option>
                         </select>
                     </div>
                 </div>
@@ -414,7 +456,7 @@ HTML_TEMPLATE = """
                         <span id="filteredCountBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800/80 font-bold"></span>
                     </div>
                     <div class="text-xs text-slate-400">
-                        انقر مرتين على أي علامة لتعديلها السريع مباشرة
+                        تُحسب النسبة المئوية تلقائياً بناءً على المجموع العام المحدد لكل سنة
                     </div>
                 </div>
 
@@ -427,8 +469,8 @@ HTML_TEMPLATE = """
                                 <th class="py-3 px-3">الجامعة</th>
                                 <th class="py-3 px-4">الاختصاص / الكلية</th>
                                 <th class="py-3 px-3 text-center">نوع القبول</th>
-                                <th class="py-3 px-3 text-center">الحالة</th>
-                                <th class="py-3 px-3 text-center font-black">الحد الأدنى</th>
+                                <th class="py-3 px-3 text-center">نوع الإعلان</th>
+                                <th class="py-3 px-3 text-center font-black">الحد الأدنى والنسبة %</th>
                                 <th class="py-3 px-3 text-center">الإجراءات</th>
                             </tr>
                         </thead>
@@ -464,7 +506,7 @@ HTML_TEMPLATE = """
                         </div>
                         <div>
                             <h3 class="font-bold text-rose-300 text-base">سجلات مشبوهة تحتاج لتدقيق فوري ({{ anomalies|length }} سجل)</h3>
-                            <p class="text-xs text-rose-200/80">تم الكشف عن نصوص مدمجة أو درجات غير مطابقة للمألوف (مثل درجات تطابق رقم العام الدراسي 2025/2026 أو علامات فوق 2400).</p>
+                            <p class="text-xs text-rose-200/80">تم الكشف عن نصوص مدمجة أو درجات غير مطابقة للمألوف (مثل درجات تطابق رقم العام الدراسي 2025/2026 أو علامات فوق المجموع العام).</p>
                         </div>
                     </div>
                 </div>
@@ -476,6 +518,7 @@ HTML_TEMPLATE = """
                                 <th class="py-2.5 px-3">السنة</th>
                                 <th class="py-2.5 px-3">الجامعة</th>
                                 <th class="py-2.5 px-3">الاختصاص</th>
+                                <th class="py-2.5 px-3 text-center">نوع الإعلان</th>
                                 <th class="py-2.5 px-3 text-center">الدرجة</th>
                                 <th class="py-2.5 px-3">سبب الاشتباه</th>
                                 <th class="py-2.5 px-3 text-center">إجراء سريع</th>
@@ -487,6 +530,11 @@ HTML_TEMPLATE = """
                                 <td class="py-2.5 px-3 font-bold text-slate-200">{{ a.year }}</td>
                                 <td class="py-2.5 px-3 text-slate-300">{{ a.university }}</td>
                                 <td class="py-2.5 px-3 text-slate-300 max-w-xs truncate" title="{{ a.specialization }}">{{ a.specialization }}</td>
+                                <td class="py-2.5 px-3 text-center">
+                                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold {% if a.round_type == 'مفاضلة أولى' %}bg-amber-950/60 text-amber-300 border border-amber-800/60{% else %}bg-emerald-950/60 text-emerald-300 border border-emerald-800/60{% endif %}">
+                                        {{ a.round_type }}
+                                    </span>
+                                </td>
                                 <td class="py-2.5 px-3 text-center font-black text-rose-400">{{ a.score }}</td>
                                 <td class="py-2.5 px-3 text-amber-300 font-medium">{{ a.anomaly_reason }}</td>
                                 <td class="py-2.5 px-3 text-center">
@@ -507,31 +555,51 @@ HTML_TEMPLATE = """
             </div>
             {% endif %}
 
-            <!-- Section 2: Year Health Cards (بطاقات فحص وتغطية السنوات) -->
+            <!-- Section 2: Year Health Cards (بطاقات فحص وتغطية السنوات والمجموع العام) -->
             <div class="space-y-3">
-                <h3 class="font-bold text-slate-200 text-sm flex items-center gap-2">
-                    <i class="fa-solid fa-calendar-check text-emerald-400"></i>
-                    حالة تغطية وجودة البيانات لكل سنة دراسية (2014 - 2026)
-                </h3>
+                <div class="flex items-center justify-between">
+                    <h3 class="font-bold text-slate-200 text-sm flex items-center gap-2">
+                        <i class="fa-solid fa-calendar-check text-emerald-400"></i>
+                        المجاميع العامة وتغطية البيانات لكل سنة دراسية (2014 - 2026)
+                    </h3>
+                    <button onclick="openYearSettingsModal()" class="text-xs text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 hover:underline">
+                        <i class="fa-solid fa-sliders"></i> تعديل المجاميع العامة لكافة السنوات
+                    </button>
+                </div>
 
                 <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                     {% for ys in years_summary %}
-                    <div class="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl space-y-2 hover:border-slate-700 transition-all">
-                        <div class="flex items-center justify-between">
-                            <span class="text-base font-black text-emerald-400">{{ ys.year }}</span>
-                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-950 text-slate-400 border border-slate-800">
-                                {{ ys.total_count }} سجل
-                            </span>
+                    <div class="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl space-y-2 hover:border-slate-700 transition-all flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between">
+                                <span class="text-base font-black text-emerald-400">{{ ys.year }}</span>
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-950 text-slate-400 border border-slate-800">
+                                    {{ ys.total_count }} سجل
+                                </span>
+                            </div>
+
+                            <!-- Max score box -->
+                            <div class="mt-2 bg-slate-950 px-2 py-1.5 rounded-xl border border-slate-800/80 flex items-center justify-between text-[11px]">
+                                <span class="text-slate-400">المجموع العام:</span>
+                                <span onclick="editYearMaxScore({{ ys.year }}, {{ ys.year_max_score }})" 
+                                      title="انقر لتعديل المجموع العام لسنة {{ ys.year }}" 
+                                      class="cursor-pointer font-black text-amber-400 hover:text-amber-300 underline decoration-dashed">
+                                    {{ ys.year_max_score|int }}
+                                </span>
+                            </div>
+
+                            <div class="flex items-center justify-between text-xs text-slate-300 border-t border-slate-800/80 pt-2 mt-2">
+                                <span>عام: <strong class="text-blue-400">{{ ys.aam_count }}</strong></span>
+                                <span>موازي: <strong class="text-purple-400">{{ ys.muwazi_count }}</strong></span>
+                            </div>
+
+                            <div class="flex items-center justify-between text-[10px] text-slate-400 mt-1">
+                                <span>أولى: <strong class="text-amber-400">{{ ys.first_round_count }}</strong></span>
+                                <span>نتائج: <strong class="text-emerald-400">{{ ys.result_count }}</strong></span>
+                            </div>
                         </div>
-                        <div class="flex items-center justify-between text-xs text-slate-300 border-t border-slate-800/80 pt-2">
-                            <span>عام: <strong class="text-blue-400">{{ ys.aam_count }}</strong></span>
-                            <span>موازي: <strong class="text-purple-400">{{ ys.muwazi_count }}</strong></span>
-                        </div>
-                        <div class="text-[10px] text-slate-400 flex items-center justify-between">
-                            <span>المدى:</span>
-                            <span>{{ ys.min_score|round(0) }} - {{ ys.max_score|round(0) }}</span>
-                        </div>
-                        <button onclick="quickFilterFromCard('{{ ys.year }}')" class="w-full py-1 text-[11px] font-bold bg-slate-950 hover:bg-emerald-950 text-slate-400 hover:text-emerald-300 border border-slate-800 rounded-lg transition-colors">
+
+                        <button onclick="quickFilterFromCard('{{ ys.year }}')" class="w-full py-1 mt-2 text-[11px] font-bold bg-slate-950 hover:bg-emerald-950 text-slate-400 hover:text-emerald-300 border border-slate-800 rounded-lg transition-colors">
                             تنقيح بيانات {{ ys.year }}
                         </button>
                     </div>
@@ -545,15 +613,20 @@ HTML_TEMPLATE = """
                     <div>
                         <h3 class="font-bold text-slate-200 text-sm flex items-center gap-2">
                             <i class="fa-solid fa-table-cells text-emerald-400"></i>
-                            مصفوفة مقارنة التخصصات عبر السنوات جنباً إلى جنب
+                            مصفوفة مقارنة التخصصات عبر السنوات (العلامة والنسبة المئوية)
                         </h3>
-                        <p class="text-xs text-slate-400 mt-0.5">يمكنك مقارنة درجات نفس الاختصاص في كافة الجامعات عبر كل السنوات واكتشاف الفراغات بنقرة واحدة</p>
+                        <p class="text-xs text-slate-400 mt-0.5">مقارنة درجات كل كلية جنباً إلى جنب مع النسبة المئوية المحسوبة تلقائياً</p>
                     </div>
                     
                     <div class="flex items-center gap-2">
                         <select id="matrixTypeSelect" onchange="loadMatrix()" class="text-xs font-bold bg-slate-950 text-slate-200 border border-slate-800 rounded-xl p-2 focus:ring-1 focus:ring-emerald-500">
                             <option value="عام">القبول العام فقط</option>
                             <option value="موازي">الموازي فقط</option>
+                        </select>
+                        <select id="matrixRoundSelect" onchange="loadMatrix()" class="text-xs font-bold bg-slate-950 text-slate-200 border border-slate-800 rounded-xl p-2 focus:ring-1 focus:ring-emerald-500">
+                            <option value="">نتائج ومفاضلة أولى</option>
+                            <option value="إعلان نتيجة" selected>إعلان نتيجة فقط</option>
+                            <option value="مفاضلة أولى">مفاضلة أولى فقط</option>
                         </select>
                         <input type="text" id="matrixSearchInput" placeholder="تصفية اختصاص..." oninput="filterMatrixRows()" 
                                class="text-xs bg-slate-950 text-slate-200 border border-slate-800 rounded-xl px-3 py-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none">
@@ -604,6 +677,7 @@ HTML_TEMPLATE = """
                                 <th class="py-3.5 px-4">اسم ملف الـ PDF</th>
                                 <th class="py-3.5 px-3 text-center">السنة</th>
                                 <th class="py-3.5 px-3 text-center">النوع</th>
+                                <th class="py-3.5 px-3 text-center">المرحلة المقترحة</th>
                                 <th class="py-3.5 px-3 text-center">الحالة الحالية</th>
                                 <th class="py-3.5 px-4 text-center">الإجراء السريع</th>
                             </tr>
@@ -622,6 +696,11 @@ HTML_TEMPLATE = """
                                     </span>
                                 </td>
                                 <td class="py-3.5 px-3 text-center">
+                                    <span class="text-xs px-2.5 py-0.5 rounded-full font-bold {% if sf.round_type == 'مفاضلة أولى' %}bg-amber-950/70 text-amber-300 border border-amber-800/60{% else %}bg-emerald-950/70 text-emerald-300 border border-emerald-800/60{% endif %}">
+                                        {{ sf.round_type }}
+                                    </span>
+                                </td>
+                                <td class="py-3.5 px-3 text-center">
                                     {% if sf.is_scanned %}
                                     <span class="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-950/70 text-amber-300 border border-amber-800/60 flex items-center justify-center gap-1 w-max mx-auto">
                                         <i class="fa-solid fa-image text-[10px]"></i> صورة ممسوحة ضوئياً
@@ -633,7 +712,7 @@ HTML_TEMPLATE = """
                                     {% endif %}
                                 </td>
                                 <td class="py-3.5 px-4 text-center">
-                                    <button onclick="prefillAddModal('{{ sf.year }}', '{{ sf.admission_type }}', {{ 1 if sf.is_final_result else 0 }})" 
+                                    <button onclick="prefillAddModal('{{ sf.year }}', '{{ sf.admission_type }}', '{{ sf.round_type }}')" 
                                             class="bg-emerald-950/60 hover:bg-emerald-900 text-emerald-300 hover:text-emerald-200 text-xs font-bold px-3 py-1.5 rounded-lg border border-emerald-700/60 transition-colors flex items-center gap-1.5 mx-auto">
                                         <i class="fa-solid fa-plus-circle"></i>
                                         <span>إضافة بيانات لهذا الملف</span>
@@ -673,7 +752,7 @@ HTML_TEMPLATE = """
 
     </main>
 
-    <!-- Modal: Add / Edit Record -->
+    <!-- Modal 1: Add / Edit Record -->
     <div id="recordModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
         <div class="bg-slate-900 rounded-3xl max-w-lg w-full shadow-2xl border border-slate-800 overflow-hidden transform transition-all text-slate-100">
             <div class="px-6 py-4 bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-900 border-b border-slate-800 text-white flex items-center justify-between">
@@ -692,7 +771,7 @@ HTML_TEMPLATE = """
                 <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-bold text-slate-400 mb-1">السنة الدراسية *</label>
-                        <input type="number" id="formYear" min="2010" max="2030" required placeholder="مثال: 2025"
+                        <input type="number" id="formYear" min="2010" max="2030" required placeholder="مثال: 2025" oninput="updateModalPercentage()"
                                class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                     </div>
 
@@ -707,6 +786,31 @@ HTML_TEMPLATE = """
 
                 <div class="grid grid-cols-2 gap-3">
                     <div>
+                        <label class="block text-xs font-bold text-slate-400 mb-1">نوع الإعلان / المرحلة *</label>
+                        <select id="formRoundType" required class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-emerald-300 font-bold rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
+                            <option value="إعلان نتيجة">إعلان نتيجة (الحد الأدنى الفعلي)</option>
+                            <option value="مفاضلة أولى">مفاضلة أولى (شروط التقدم)</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 mb-1">العلامة أو الدرجة *</label>
+                        <input type="number" step="0.1" id="formScore" min="50" max="3500" required placeholder="مثال: 2310" oninput="updateModalPercentage()"
+                               class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-emerald-400 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none font-bold">
+                    </div>
+                </div>
+
+                <!-- Real-time Percentage Indicator -->
+                <div id="modalPercentageBox" class="p-2.5 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
+                    <span class="text-slate-400 flex items-center gap-1.5">
+                        <i class="fa-solid fa-calculator text-amber-400"></i>
+                        <span>النسبة المئوية المحسوبة:</span>
+                    </span>
+                    <span id="modalPercentageValue" class="font-black text-amber-400 text-sm">--%</span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="col-span-2">
                         <label class="block text-xs font-bold text-slate-400 mb-1">الجامعة *</label>
                         <input type="text" id="formUniversity" required list="universitiesList" placeholder="جامعة دمشق، حلب..."
                                class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
@@ -722,12 +826,6 @@ HTML_TEMPLATE = """
                             <option value="جامعة طرطوس"></option>
                             <option value="جامعة الفرات"></option>
                         </datalist>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-slate-400 mb-1">العلامة أو النسبة *</label>
-                        <input type="number" step="0.1" id="formScore" min="50" max="3200" required placeholder="مثال: 2310"
-                               class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-emerald-400 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none font-bold">
                     </div>
                 </div>
 
@@ -747,14 +845,6 @@ HTML_TEMPLATE = """
                     </datalist>
                 </div>
 
-                <div>
-                    <label class="block text-xs font-bold text-slate-400 mb-1">نوع الوثيقة / الحالة *</label>
-                    <select id="formIsFinal" required class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
-                        <option value="1">النتيجة والحد الأدنى الفعلي للمفاضلة (Final Cutoff)</option>
-                        <option value="0">إعلان شروط التقدم المبدئي (Initial Threshold)</option>
-                    </select>
-                </div>
-
                 <div class="pt-4 border-t border-slate-800 flex items-center justify-end gap-2">
                     <button type="button" onclick="closeModal()" class="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 bg-slate-800 rounded-xl hover:bg-slate-700 transition-colors">
                         إلغاء
@@ -768,10 +858,46 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
+    <!-- Modal 2: Bulk Edit Year Settings (المجاميع السنوية للشهادة الثانوية) -->
+    <div id="yearSettingsModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 rounded-3xl max-w-lg w-full shadow-2xl border border-slate-800 overflow-hidden transform transition-all text-slate-100">
+            <div class="px-6 py-4 bg-gradient-to-r from-amber-950 via-slate-900 to-slate-900 border-b border-slate-800 text-white flex items-center justify-between">
+                <h3 class="font-black text-base flex items-center gap-2 text-amber-400">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>إعداد المجموع العام للشهادة الثانوية لكل سنة</span>
+                </h3>
+                <button onclick="closeYearSettingsModal()" class="text-slate-400 hover:text-white text-lg">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="p-6 space-y-4">
+                <p class="text-xs text-slate-400 leading-relaxed">
+                    حدد المجموع العام الكامل للشهادة الثانوية العامة (الفرع العلمي) لكل سنة دراسية، وسيتم على أساسه حساب وتحديث النسبة المئوية (%) لكافة الاختصاصات آلياً:
+                </p>
+
+                <div class="max-h-72 overflow-y-auto space-y-2 pr-1" id="yearSettingsInputsList">
+                    <!-- Populated dynamically via JS -->
+                </div>
+
+                <div class="pt-4 border-t border-slate-800 flex items-center justify-end gap-2">
+                    <button type="button" onclick="closeYearSettingsModal()" class="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 bg-slate-800 rounded-xl hover:bg-slate-700 transition-colors">
+                        إلغاء
+                    </button>
+                    <button type="button" onclick="saveYearSettingsBulk()" class="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 rounded-xl shadow-md transition-colors flex items-center gap-1.5">
+                        <i class="fa-solid fa-save"></i>
+                        <span>حفظ وتحديث النسب المئوية</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Client-side Logic -->
     <script>
         let allData = [];
         let filteredData = [];
+        let yearSettings = {};
         let currentPage = 1;
         const pageSize = 20;
         let chartInstance = null;
@@ -786,10 +912,20 @@ HTML_TEMPLATE = """
         });
 
         document.addEventListener('DOMContentLoaded', async () => {
+            await loadYearSettings();
             await loadData();
             initChart();
             updateChart();
         });
+
+        async function loadYearSettings() {
+            try {
+                const res = await fetch('/api/year-settings');
+                yearSettings = await res.json();
+            } catch (err) {
+                console.error("Error loading year settings:", err);
+            }
+        }
 
         async function loadData() {
             try {
@@ -856,14 +992,14 @@ HTML_TEMPLATE = """
             const year = document.getElementById('yearSelect').value;
             const uni = document.getElementById('uniSelect').value;
             const type = document.getElementById('typeSelect').value;
-            const status = document.getElementById('statusSelect').value;
+            const roundType = document.getElementById('roundSelect').value;
 
             filteredData = allData.filter(row => {
                 if (query && !row.specialization.toLowerCase().includes(query) && !row.university.toLowerCase().includes(query)) return false;
                 if (year && row.year != year) return false;
                 if (uni && row.university != uni) return false;
                 if (type && row.admission_type != type) return false;
-                if (status !== "" && row.is_final_result != status) return false;
+                if (roundType && row.round_type != roundType) return false;
                 return true;
             });
 
@@ -876,7 +1012,7 @@ HTML_TEMPLATE = """
             document.getElementById('yearSelect').value = '';
             document.getElementById('uniSelect').value = '';
             document.getElementById('typeSelect').value = '';
-            document.getElementById('statusSelect').value = '';
+            document.getElementById('roundSelect').value = '';
             quickSelectYear('');
         }
 
@@ -905,9 +1041,13 @@ HTML_TEMPLATE = """
                     ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-blue-950/70 text-blue-300 border border-blue-800/60">عام</span>`
                     : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-purple-950/70 text-purple-300 border border-purple-800/60">موازي</span>`;
 
-                const statusBadge = r.is_final_result
-                    ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"><i class="fa-solid fa-check-double ml-1 text-[10px]"></i> نتيجة فعلية</span>`
-                    : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-950/70 text-amber-300 border border-amber-800/60"><i class="fa-solid fa-clock ml-1 text-[10px]"></i> شرط تقدم</span>`;
+                const isFinal = r.round_type === 'إعلان نتيجة';
+                const roundBadge = isFinal
+                    ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"><i class="fa-solid fa-check-double ml-1 text-[10px]"></i> إعلان نتيجة</span>`
+                    : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-950/70 text-amber-300 border border-amber-800/60"><i class="fa-solid fa-list-check ml-1 text-[10px]"></i> مفاضلة أولى</span>`;
+
+                const maxScore = yearSettings[r.year] || r.max_score || 2400;
+                const percentage = ((r.score / maxScore) * 100).toFixed(2);
 
                 return `
                     <tr class="hover:bg-slate-800/40 transition-colors">
@@ -916,12 +1056,17 @@ HTML_TEMPLATE = """
                         <td class="py-3 px-3 font-semibold text-slate-300">${r.university}</td>
                         <td class="py-3 px-4 text-slate-200 font-medium">${r.specialization}</td>
                         <td class="py-3 px-3 text-center">${typeBadge}</td>
-                        <td class="py-3 px-3 text-center">${statusBadge}</td>
+                        <td class="py-3 px-3 text-center">${roundBadge}</td>
                         <td class="py-3 px-3 text-center">
-                            <span onclick="inlineEditScore(${r.id}, ${r.score})" title="انقر لتعديل العلامة فورياً" 
-                                  class="cursor-pointer font-black text-emerald-400 hover:text-emerald-300 text-base px-2 py-1 rounded-lg hover:bg-slate-800 transition-colors">
-                                ${r.score}
-                            </span>
+                            <div class="inline-flex flex-col items-center">
+                                <span onclick="inlineEditScore(${r.id}, ${r.score})" title="انقر لتعديل العلامة فورياً" 
+                                      class="cursor-pointer font-black text-emerald-400 hover:text-emerald-300 text-base px-2 py-0.5 rounded-lg hover:bg-slate-800 transition-colors">
+                                    ${r.score}
+                                </span>
+                                <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-slate-950 text-amber-300 border border-slate-800" title="المجموع العام لعام ${r.year}: ${maxScore}">
+                                    ${percentage}%
+                                </span>
+                            </div>
                         </td>
                         <td class="py-3 px-3 text-center">
                             <div class="flex items-center justify-center gap-1.5">
@@ -965,7 +1110,7 @@ HTML_TEMPLATE = """
             const { value: newScore } = await DarkSwal.fire({
                 title: 'تعديل سريع للعلامة',
                 input: 'number',
-                inputLabel: 'أدخل العلامة أو النسبة الجديدة:',
+                inputLabel: 'أدخل العلامة الجديدة:',
                 inputValue: oldScore,
                 showCancelButton: true,
                 inputValidator: (val) => {
@@ -980,9 +1125,9 @@ HTML_TEMPLATE = """
                 const payload = {
                     year: rec.year,
                     admission_type: rec.admission_type,
+                    round_type: rec.round_type,
                     university: rec.university,
                     specialization: rec.specialization,
-                    is_final_result: rec.is_final_result,
                     score: parseFloat(newScore)
                 };
 
@@ -1002,12 +1147,118 @@ HTML_TEMPLATE = """
         }
 
         // ==========================================
+        // Year Settings (المجاميع السنوية)
+        // ==========================================
+        async function editYearMaxScore(year, currentMax) {
+            const { value: newMax } = await DarkSwal.fire({
+                title: `المجموع العام لسنة ${year}`,
+                input: 'number',
+                inputLabel: `حدد المجموع الكلي للشهادة الثانوية العامة لسنة ${year}:`,
+                inputValue: currentMax || 2400,
+                showCancelButton: true,
+                inputValidator: (val) => {
+                    if (!val || val < 1000 || val > 4000) return 'يرجى إدخال مجموع عام صحيح (مثال: 2400 أو 3000)';
+                }
+            });
+
+            if (newMax) {
+                const res = await fetch('/api/year-settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ year: parseInt(year), max_score: parseFloat(newMax) })
+                });
+                const resJson = await res.json();
+                if (resJson.success) {
+                    DarkSwal.fire({ title: 'تم تحديث المجموع العام!', icon: 'success', timer: 1200, showConfirmButton: false });
+                    await loadYearSettings();
+                    await loadData();
+                    if (matrixCache) loadMatrix();
+                }
+            }
+        }
+
+        function openYearSettingsModal() {
+            const container = document.getElementById('yearSettingsInputsList');
+            const years = Object.keys(yearSettings).map(Number).sort((a, b) => b - a);
+
+            let html = '';
+            years.forEach(y => {
+                const maxVal = yearSettings[y] || 2400;
+                html += `
+                    <div class="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                        <span class="font-bold text-slate-200 text-xs">${y}</span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[11px] text-slate-400">المجموع:</span>
+                            <input type="number" id="setting-year-${y}" value="${maxVal}" 
+                                   class="w-24 p-1.5 text-xs bg-slate-900 border border-slate-700 text-amber-300 font-bold rounded-lg text-center focus:ring-1 focus:ring-amber-500 focus:outline-none">
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+            document.getElementById('yearSettingsModal').classList.remove('hidden');
+        }
+
+        function closeYearSettingsModal() {
+            document.getElementById('yearSettingsModal').classList.add('hidden');
+        }
+
+        async function saveYearSettingsBulk() {
+            const years = Object.keys(yearSettings).map(Number);
+            const settingsList = [];
+
+            years.forEach(y => {
+                const input = document.getElementById(`setting-year-${y}`);
+                if (input && input.value) {
+                    settingsList.push({
+                        year: y,
+                        max_score: parseFloat(input.value)
+                    });
+                }
+            });
+
+            const res = await fetch('/api/year-settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ settings: settingsList })
+            });
+
+            const resJson = await res.json();
+            if (resJson.success) {
+                closeYearSettingsModal();
+                DarkSwal.fire({ title: 'تم الحفظ بنجاح!', text: 'تم تحديث المجاميع والنسب المئوية لكافة السنوات.', icon: 'success', timer: 1500, showConfirmButton: false });
+                await loadYearSettings();
+                await loadData();
+                if (matrixCache) loadMatrix();
+            }
+        }
+
+        // ==========================================
+        // Modal Live Percentage Feedback
+        // ==========================================
+        function updateModalPercentage() {
+            const year = parseInt(document.getElementById('formYear').value);
+            const score = parseFloat(document.getElementById('formScore').value);
+            const valEl = document.getElementById('modalPercentageValue');
+
+            if (year && score && score > 0) {
+                const maxScore = yearSettings[year] || 2400;
+                const pct = ((score / maxScore) * 100).toFixed(2);
+                valEl.innerText = `${pct}% (المجموع العام: ${maxScore})`;
+            } else {
+                valEl.innerText = '--%';
+            }
+        }
+
+        // ==========================================
         // Cross-Year Comparative Matrix Logic
         // ==========================================
         async function loadMatrix() {
             const type = document.getElementById('matrixTypeSelect').value;
+            const round = document.getElementById('matrixRoundSelect').value;
             try {
-                const res = await fetch(`/api/matrix?type=${encodeURIComponent(type)}`);
+                const res = await fetch(`/api/matrix?type=${encodeURIComponent(type)}&round=${encodeURIComponent(round)}`);
                 matrixCache = await res.json();
                 renderMatrix();
             } catch (err) {
@@ -1030,7 +1281,13 @@ HTML_TEMPLATE = """
                     <th class="py-3 px-3 text-right">الجامعة والاختصاص</th>
             `;
             years.forEach(y => {
-                headHtml += `<th class="py-3 px-2 text-center text-xs font-bold text-slate-300 border-r border-slate-800/80">${y}</th>`;
+                const maxS = yearSettings[y] || 2400;
+                headHtml += `
+                    <th class="py-3 px-2 text-center text-xs font-bold text-slate-300 border-r border-slate-800/80">
+                        <div>${y}</div>
+                        <div class="text-[9px] text-amber-400 font-normal">/${maxS}</div>
+                    </th>
+                `;
             });
             headHtml += `</tr>`;
             document.getElementById('matrixHead').innerHTML = headHtml;
@@ -1054,19 +1311,23 @@ HTML_TEMPLATE = """
                 years.forEach(y => {
                     const cell = r.scores[y];
                     if (cell) {
+                        const maxS = yearSettings[y] || 2400;
+                        const pct = ((cell.score / maxS) * 100).toFixed(1);
                         bodyHtml += `
-                            <td class="py-2.5 px-2 text-center border-r border-slate-800/60">
-                                <span onclick="inlineEditScore(${cell.id}, ${cell.score})" title="تعديل" 
-                                      class="cursor-pointer font-bold text-emerald-400 hover:text-emerald-300 text-xs px-1.5 py-0.5 rounded bg-emerald-950/40 hover:bg-emerald-900 border border-emerald-800/60 block">
-                                    ${cell.score}
-                                </span>
+                            <td class="py-2 px-1.5 text-center border-r border-slate-800/60">
+                                <div onclick="inlineEditScore(${cell.id}, ${cell.score})" title="${cell.round_type} - انقر للتعديل" 
+                                     class="cursor-pointer font-bold px-1.5 py-0.5 rounded bg-emerald-950/40 hover:bg-emerald-900 border border-emerald-800/60 block">
+                                    <span class="text-emerald-400 text-xs block">${cell.score}</span>
+                                    <span class="text-amber-300 text-[10px] font-normal block">${pct}%</span>
+                                </div>
                             </td>
                         `;
                     } else {
                         const currentType = document.getElementById('matrixTypeSelect').value;
+                        const currentRound = document.getElementById('matrixRoundSelect').value || 'إعلان نتيجة';
                         bodyHtml += `
-                            <td class="py-2.5 px-2 text-center border-r border-slate-800/60">
-                                <button onclick="quickAddFromMatrix('${y}', '${encodeURIComponent(r.university)}', '${encodeURIComponent(r.specialization)}', '${currentType}')" 
+                            <td class="py-2 px-1.5 text-center border-r border-slate-800/60">
+                                <button onclick="quickAddFromMatrix('${y}', '${encodeURIComponent(r.university)}', '${encodeURIComponent(r.specialization)}', '${currentType}', '${currentRound}')" 
                                         title="إضافة علامة لسنة ${y}" 
                                         class="text-[10px] text-slate-600 hover:text-emerald-400 p-1 hover:bg-slate-800 rounded transition-colors">
                                     <i class="fa-solid fa-plus"></i>
@@ -1082,13 +1343,14 @@ HTML_TEMPLATE = """
             document.getElementById('matrixBody').innerHTML = bodyHtml || `<tr><td colspan="${years.length + 1}" class="py-8 text-center text-slate-500">لا توجد اختصاصات مطابقة للبحث</td></tr>`;
         }
 
-        function quickAddFromMatrix(year, uniEnc, specEnc, admType) {
+        function quickAddFromMatrix(year, uniEnc, specEnc, admType, roundType) {
             openAddModal();
             document.getElementById('formYear').value = year;
             document.getElementById('formUniversity').value = decodeURIComponent(uniEnc);
             document.getElementById('formSpec').value = decodeURIComponent(specEnc);
             document.getElementById('formAdmType').value = admType;
-            document.getElementById('formIsFinal').value = '1';
+            document.getElementById('formRoundType').value = roundType || 'إعلان نتيجة';
+            updateModalPercentage();
             document.getElementById('formScore').focus();
         }
 
@@ -1098,18 +1360,20 @@ HTML_TEMPLATE = """
             document.getElementById('recordId').value = '';
             document.getElementById('formYear').value = new Date().getFullYear();
             document.getElementById('formAdmType').value = 'عام';
+            document.getElementById('formRoundType').value = 'إعلان نتيجة';
             document.getElementById('formUniversity').value = '';
             document.getElementById('formSpec').value = '';
-            document.getElementById('formIsFinal').value = '1';
             document.getElementById('formScore').value = '';
+            updateModalPercentage();
             document.getElementById('recordModal').classList.remove('hidden');
         }
 
-        function prefillAddModal(year, admType, isFinal) {
+        function prefillAddModal(year, admType, roundType) {
             openAddModal();
             if (year && year !== 'None') document.getElementById('formYear').value = year;
             if (admType) document.getElementById('formAdmType').value = admType;
-            document.getElementById('formIsFinal').value = isFinal ? '1' : '0';
+            if (roundType) document.getElementById('formRoundType').value = roundType;
+            updateModalPercentage();
         }
 
         function openEditModal(id) {
@@ -1120,10 +1384,11 @@ HTML_TEMPLATE = """
             document.getElementById('recordId').value = rec.id;
             document.getElementById('formYear').value = rec.year;
             document.getElementById('formAdmType').value = rec.admission_type;
+            document.getElementById('formRoundType').value = rec.round_type || 'إعلان نتيجة';
             document.getElementById('formUniversity').value = rec.university;
             document.getElementById('formSpec').value = rec.specialization;
-            document.getElementById('formIsFinal').value = rec.is_final_result ? '1' : '0';
             document.getElementById('formScore').value = rec.score;
+            updateModalPercentage();
             document.getElementById('recordModal').classList.remove('hidden');
         }
 
@@ -1137,9 +1402,9 @@ HTML_TEMPLATE = """
             const payload = {
                 year: parseInt(document.getElementById('formYear').value),
                 admission_type: document.getElementById('formAdmType').value,
+                round_type: document.getElementById('formRoundType').value,
                 university: document.getElementById('formUniversity').value.trim(),
                 specialization: document.getElementById('formSpec').value.trim(),
-                is_final_result: document.getElementById('formIsFinal').value === '1',
                 score: parseFloat(document.getElementById('formScore').value)
             };
 
@@ -1157,7 +1422,7 @@ HTML_TEMPLATE = """
                     closeModal();
                     DarkSwal.fire({
                         title: id ? 'تم التعديل بنجاح!' : 'تمت الإضافة بنجاح!',
-                        text: 'تم تحديث قاعدة البيانات SQLite فورياً.',
+                        text: 'تم تحديث قاعدة البيانات وحساب النسبة المئوية فورياً.',
                         icon: 'success',
                         timer: 1500,
                         showConfirmButton: false
@@ -1208,15 +1473,21 @@ HTML_TEMPLATE = """
 
         function exportCSV() {
             if (!filteredData.length) return;
-            const headers = ["السنة", "الجامعة", "الاختصاص", "نوع القبول", "حالة الوثيقة", "العلامة"];
-            const rows = filteredData.map(r => [
-                r.year,
-                `"${r.university}"`,
-                `"${r.specialization}"`,
-                r.admission_type,
-                r.is_final_result ? "نتيجة فعلية" : "شرط تقدم",
-                r.score
-            ]);
+            const headers = ["السنة", "الجامعة", "الاختصاص", "نوع القبول", "نوع الإعلان", "الحد الأدنى", "المجموع العام للسنة", "النسبة المئوية %"];
+            const rows = filteredData.map(r => {
+                const maxS = yearSettings[r.year] || r.max_score || 2400;
+                const pct = ((r.score / maxS) * 100).toFixed(2);
+                return [
+                    r.year,
+                    `"${r.university}"`,
+                    `"${r.specialization}"`,
+                    r.admission_type,
+                    r.round_type,
+                    r.score,
+                    maxS,
+                    `${pct}%`
+                ];
+            });
 
             const csvContent = "\\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\\n");
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -1235,7 +1506,7 @@ HTML_TEMPLATE = """
                     labels: [],
                     datasets: [
                         {
-                            label: 'الحد الأدنى الفعلي - عام',
+                            label: 'إعلان نتيجة - عام',
                             borderColor: '#10b981',
                             backgroundColor: 'rgba(16, 185, 129, 0.15)',
                             data: [],
@@ -1246,7 +1517,7 @@ HTML_TEMPLATE = """
                             pointBackgroundColor: '#10b981'
                         },
                         {
-                            label: 'الحد الأدنى الفعلي - موازي',
+                            label: 'إعلان نتيجة - موازي',
                             borderColor: '#a855f7',
                             backgroundColor: 'rgba(168, 85, 247, 0.1)',
                             data: [],
@@ -1317,7 +1588,7 @@ HTML_TEMPLATE = """
             }
 
             allData.forEach(r => {
-                if (r.specialization.includes(specKey) && r.is_final_result) {
+                if (r.specialization.includes(specKey) && r.round_type === 'إعلان نتيجة') {
                     if (r.admission_type === 'عام') {
                         if (yearsMap[r.year]) yearsMap[r.year].aam.push(r.score);
                     } else if (r.admission_type === 'موازي') {
@@ -1381,7 +1652,7 @@ def logout():
     return redirect(url_for("login"))
 
 # =============================================================================
-# REST API Endpoints for Full CRUD & Year Matrix
+# REST API Endpoints for Full CRUD, Year Settings & Matrix
 # =============================================================================
 
 @app.route("/")
@@ -1414,13 +1685,55 @@ def index():
         username=session.get("username", "admin@moazns.sy")
     )
 
+@app.route("/api/year-settings", methods=["GET", "POST"])
+@login_required
+def api_year_settings():
+    conn = get_db_connection()
+    c = conn.cursor()
+    if request.method == "POST":
+        data = request.json or {}
+        if "settings" in data:
+            for item in data["settings"]:
+                c.execute("""
+                    INSERT INTO year_settings (year, max_score) VALUES (?, ?)
+                    ON CONFLICT(year) DO UPDATE SET max_score = excluded.max_score
+                """, (item["year"], float(item["max_score"])))
+        elif "year" in data and "max_score" in data:
+            c.execute("""
+                INSERT INTO year_settings (year, max_score) VALUES (?, ?)
+                ON CONFLICT(year) DO UPDATE SET max_score = excluded.max_score
+            """, (data["year"], float(data["max_score"])))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
+        
+    c.execute("SELECT year, max_score FROM year_settings ORDER BY year DESC")
+    settings = {r["year"]: r["max_score"] for r in c.fetchall()}
+    conn.close()
+    return jsonify(settings)
+
 @app.route("/api/data")
 @login_required
 def api_data():
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute("SELECT id, year, university, specialization, admission_type, is_final_result, score FROM admission_data ORDER BY year DESC, score DESC")
-    rows = [dict(row) for row in c.fetchall()]
+    c.execute("""
+        SELECT 
+            a.id, a.year, a.university, a.specialization, 
+            a.admission_type, a.is_final_result, 
+            COALESCE(a.round_type, CASE WHEN a.is_final_result = 1 THEN 'إعلان نتيجة' ELSE 'مفاضلة أولى' END) as round_type, 
+            a.score,
+            COALESCE(s.max_score, 2400) as max_score
+        FROM admission_data a
+        LEFT JOIN year_settings s ON a.year = s.year
+        ORDER BY a.year DESC, a.score DESC
+    """)
+    rows = []
+    for r in c.fetchall():
+        d = dict(r)
+        max_s = d["max_score"] if d["max_score"] and d["max_score"] > 0 else 2400
+        d["percentage"] = round((d["score"] / max_s) * 100, 2)
+        rows.append(d)
     conn.close()
     return jsonify(rows)
 
@@ -1428,24 +1741,31 @@ def api_data():
 @login_required
 def api_matrix():
     adm_type = request.args.get("type", "عام")
+    round_type = request.args.get("round", "")
+    
     conn = get_db_connection()
     c = conn.cursor()
     
-    # قائمة السنوات مرتبة تنازلياً
     c.execute("SELECT DISTINCT year FROM admission_data WHERE year IS NOT NULL ORDER BY year DESC")
     years = [r[0] for r in c.fetchall()]
     
-    # جلب السجلات للنوع المختار
-    c.execute("""
-        SELECT id, year, university, specialization, score 
+    query = """
+        SELECT id, year, university, specialization, score, round_type 
         FROM admission_data 
-        WHERE admission_type = ? AND is_final_result = 1
-        ORDER BY university, specialization, year DESC
-    """, (adm_type,))
+        WHERE admission_type = ?
+    """
+    params = [adm_type]
+    
+    if round_type:
+        query += " AND round_type = ?"
+        params.append(round_type)
+        
+    query += " ORDER BY university, specialization, year DESC"
+    
+    c.execute(query, params)
     records = c.fetchall()
     conn.close()
     
-    # تجميع النتائج حسب الجامعة والتخصص
     matrix_map = {}
     for r in records:
         key = (r["university"], r["specialization"])
@@ -1453,7 +1773,8 @@ def api_matrix():
             matrix_map[key] = {}
         matrix_map[key][r["year"]] = {
             "id": r["id"],
-            "score": r["score"]
+            "score": r["score"],
+            "round_type": r["round_type"]
         }
         
     rows = []
@@ -1464,7 +1785,6 @@ def api_matrix():
             "scores": scores
         })
         
-    # فرز النتائج حسب اسم الجامعة ثم التخصص
     rows.sort(key=lambda x: (x["university"], x["specialization"]))
     
     return jsonify({
@@ -1479,17 +1799,25 @@ def api_add_record():
     if not data or "year" not in data or "score" not in data:
         return jsonify({"success": False, "error": "البيانات ناقصة"}), 400
         
+    round_type = data.get("round_type") or ("إعلان نتيجة" if data.get("is_final_result") else "مفاضلة أولى")
+    is_final = 1 if round_type == "إعلان نتيجة" else 0
+    year = int(data.get("year"))
+
     conn = get_db_connection()
     c = conn.cursor()
+    # تأكد من تسجيل السنة في year_settings
+    c.execute("INSERT OR IGNORE INTO year_settings (year, max_score) VALUES (?, 2400)", (year,))
+    
     c.execute("""
-        INSERT INTO admission_data (year, university, specialization, admission_type, is_final_result, score)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO admission_data (year, university, specialization, admission_type, round_type, is_final_result, score)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (
-        data.get("year"),
+        year,
         data.get("university"),
         data.get("specialization"),
         data.get("admission_type"),
-        1 if data.get("is_final_result") else 0,
+        round_type,
+        is_final,
         data.get("score")
     ))
     new_id = c.lastrowid
@@ -1504,18 +1832,24 @@ def api_update_record(rec_id):
     if not data:
         return jsonify({"success": False, "error": "لا توجد بيانات"}), 400
         
+    round_type = data.get("round_type") or ("إعلان نتيجة" if data.get("is_final_result") else "مفاضلة أولى")
+    is_final = 1 if round_type == "إعلان نتيجة" else 0
+    year = int(data.get("year"))
+
     conn = get_db_connection()
     c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO year_settings (year, max_score) VALUES (?, 2400)", (year,))
     c.execute("""
         UPDATE admission_data
-        SET year = ?, university = ?, specialization = ?, admission_type = ?, is_final_result = ?, score = ?
+        SET year = ?, university = ?, specialization = ?, admission_type = ?, round_type = ?, is_final_result = ?, score = ?
         WHERE id = ?
     """, (
-        data.get("year"),
+        year,
         data.get("university"),
         data.get("specialization"),
         data.get("admission_type"),
-        1 if data.get("is_final_result") else 0,
+        round_type,
+        is_final,
         data.get("score"),
         rec_id
     ))
