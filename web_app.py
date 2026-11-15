@@ -809,16 +809,26 @@ HTML_TEMPLATE = """
                     <span id="modalPercentageValue" class="font-black text-amber-400 text-sm">--%</span>
                 </div>
 
-                <div class="grid grid-cols-2 gap-3">
-                    <div class="col-span-2">
-                        <label class="block text-xs font-bold text-slate-400 mb-1">الجامعة *</label>
-                        <input type="text" id="formUniversity" required list="universitiesList" placeholder="جامعة دمشق، حلب..."
-                               class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
-                        <datalist id="universitiesList">
-                            {% for u in universities %}
-                            <option value="{{ u }}"></option>
-                            {% endfor %}
-                        </datalist>
+                <div class="col-span-2 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <label class="block text-xs font-bold text-slate-400">الجامعات المستهدفة * (يمكنك تحديد أكثر من جامعة للتخصص والنسبة معاً)</label>
+                        <div class="flex items-center gap-2 text-[11px]">
+                            <button type="button" onclick="selectAllModalUnis(true)" class="text-emerald-400 hover:text-emerald-300 font-bold hover:underline">تحديد الكل</button>
+                            <span class="text-slate-700">|</span>
+                            <button type="button" onclick="selectAllModalUnis(false)" class="text-rose-400 hover:text-rose-300 font-bold hover:underline">إلغاء التحديد</button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2" id="modalUniCheckboxes">
+                        {% for u in universities %}
+                        <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 cursor-pointer text-xs font-bold transition-all text-slate-300 select-none">
+                            <input type="checkbox" name="modal_unis" value="{{ u }}" class="rounded bg-slate-900 border-slate-700 text-emerald-500 focus:ring-0">
+                            <span class="truncate">{{ u }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <div class="relative pt-1">
+                        <input type="text" id="formCustomUniversity" placeholder="أو اكتب اسم جامعة أخرى غير محددة أعلاه..." 
+                               class="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 text-slate-200 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:outline-none">
                     </div>
                 </div>
 
@@ -920,13 +930,17 @@ HTML_TEMPLATE = """
             }
         }
 
-        async function loadData() {
+        async function loadData(targetYear = null) {
             try {
                 const res = await fetch('/api/data');
                 allData = await res.json();
-                filteredData = [...allData];
                 document.getElementById('tabTotalBadge').innerText = allData.length;
-                renderTable();
+                
+                if (targetYear !== null && targetYear !== undefined && targetYear !== '') {
+                    quickSelectYear(targetYear.toString());
+                } else {
+                    applyFilters();
+                }
             } catch (err) {
                 console.error("Error loading data:", err);
             }
@@ -1336,10 +1350,27 @@ HTML_TEMPLATE = """
             document.getElementById('matrixBody').innerHTML = bodyHtml || `<tr><td colspan="${years.length + 1}" class="py-8 text-center text-slate-500">لا توجد اختصاصات مطابقة للبحث</td></tr>`;
         }
 
+        function selectAllModalUnis(checked) {
+            document.querySelectorAll('input[name="modal_unis"]').forEach(cb => {
+                cb.checked = checked;
+            });
+        }
+
         function quickAddFromMatrix(year, uniEnc, specEnc, admType, roundType) {
             openAddModal();
             document.getElementById('formYear').value = year;
-            document.getElementById('formUniversity').value = decodeURIComponent(uniEnc);
+            const targetUni = decodeURIComponent(uniEnc);
+            selectAllModalUnis(false);
+            let matched = false;
+            document.querySelectorAll('input[name="modal_unis"]').forEach(cb => {
+                if (cb.value === targetUni) {
+                    cb.checked = true;
+                    matched = true;
+                }
+            });
+            if (!matched) {
+                document.getElementById('formCustomUniversity').value = targetUni;
+            }
             document.getElementById('formSpec').value = decodeURIComponent(specEnc);
             document.getElementById('formAdmType').value = admType;
             document.getElementById('formRoundType').value = roundType || 'إعلان نتيجة';
@@ -1351,10 +1382,15 @@ HTML_TEMPLATE = """
         function openAddModal() {
             document.getElementById('modalTitle').innerHTML = '<i class="fa-solid fa-plus-circle text-emerald-400"></i> إضافة اختصاص جديد لقاعدة البيانات';
             document.getElementById('recordId').value = '';
-            document.getElementById('formYear').value = new Date().getFullYear();
-            document.getElementById('formAdmType').value = 'عام';
-            document.getElementById('formRoundType').value = 'إعلان نتيجة';
-            document.getElementById('formUniversity').value = '';
+            
+            // Automatically default to the currently filtered year if the user is viewing a specific year
+            const activeYear = document.getElementById('yearSelect').value;
+            document.getElementById('formYear').value = activeYear || new Date().getFullYear();
+            document.getElementById('formAdmType').value = document.getElementById('typeSelect').value || 'عام';
+            document.getElementById('formRoundType').value = document.getElementById('roundSelect').value || 'إعلان نتيجة';
+            
+            selectAllModalUnis(false);
+            document.getElementById('formCustomUniversity').value = '';
             document.getElementById('formSpec').value = '';
             document.getElementById('formScore').value = '';
             updateModalPercentage();
@@ -1378,7 +1414,17 @@ HTML_TEMPLATE = """
             document.getElementById('formYear').value = rec.year;
             document.getElementById('formAdmType').value = rec.admission_type;
             document.getElementById('formRoundType').value = rec.round_type || 'إعلان نتيجة';
-            document.getElementById('formUniversity').value = rec.university;
+            
+            selectAllModalUnis(false);
+            let matched = false;
+            document.querySelectorAll('input[name="modal_unis"]').forEach(cb => {
+                if (cb.value === rec.university) {
+                    cb.checked = true;
+                    matched = true;
+                }
+            });
+            document.getElementById('formCustomUniversity').value = matched ? '' : rec.university;
+
             document.getElementById('formSpec').value = rec.specialization;
             document.getElementById('formScore').value = rec.score;
             updateModalPercentage();
@@ -1392,11 +1438,26 @@ HTML_TEMPLATE = """
         async function saveRecord(e) {
             e.preventDefault();
             const id = document.getElementById('recordId').value;
+            const yearVal = parseInt(document.getElementById('formYear').value);
+
+            // Collect selected universities
+            const selectedUnis = Array.from(document.querySelectorAll('input[name="modal_unis"]:checked')).map(cb => cb.value);
+            const customUni = document.getElementById('formCustomUniversity').value.trim();
+            if (customUni && !selectedUnis.includes(customUni)) {
+                selectedUnis.push(customUni);
+            }
+
+            if (selectedUnis.length === 0) {
+                DarkSwal.fire('تنبيه', 'يرجى اختيار جامعة واحدة على الأقل أو كتابة اسم الجامعة', 'warning');
+                return;
+            }
+
             const payload = {
-                year: parseInt(document.getElementById('formYear').value),
+                year: yearVal,
                 admission_type: document.getElementById('formAdmType').value,
                 round_type: document.getElementById('formRoundType').value,
-                university: document.getElementById('formUniversity').value.trim(),
+                universities: selectedUnis,
+                university: selectedUnis[0],
                 specialization: document.getElementById('formSpec').value.trim(),
                 score: parseFloat(document.getElementById('formScore').value)
             };
@@ -1413,14 +1474,20 @@ HTML_TEMPLATE = """
                 const result = await res.json();
                 if (result.success) {
                     closeModal();
+                    const countMsg = (!id && selectedUnis.length > 1) 
+                        ? `تمت إضافة ${selectedUnis.length} سجلات لـ ${selectedUnis.length} جامعات بنجاح!` 
+                        : (id ? 'تم التعديل بنجاح!' : 'تمت الإضافة بنجاح!');
+                    
                     DarkSwal.fire({
-                        title: id ? 'تم التعديل بنجاح!' : 'تمت الإضافة بنجاح!',
-                        text: 'تم تحديث قاعدة البيانات وحساب النسبة المئوية فورياً.',
+                        title: countMsg,
+                        text: `تم الحفظ وبقيت في بيانات سنة ${yearVal}.`,
                         icon: 'success',
-                        timer: 1500,
+                        timer: 1600,
                         showConfirmButton: false
                     });
-                    await loadData();
+                    
+                    // CRITICAL: stay on the exact same year!
+                    await loadData(yearVal);
                     updateChart();
                     if (matrixCache) loadMatrix();
                 } else {
@@ -1796,27 +1863,42 @@ def api_add_record():
     is_final = 1 if round_type == "إعلان نتيجة" else 0
     year = int(data.get("year"))
 
+    # Support multiple universities
+    unis = data.get("universities") or []
+    if not unis and data.get("university"):
+        unis = [data.get("university")]
+        
+    cleaned_unis = [u.strip() for u in unis if u and u.strip()]
+    if not cleaned_unis:
+        return jsonify({"success": False, "error": "يرجى تحديد جامعة واحدة على الأقل"}), 400
+
     conn = get_db_connection()
     c = conn.cursor()
-    # تأكد من تسجيل السنة في year_settings
     c.execute("INSERT OR IGNORE INTO year_settings (year, max_score) VALUES (?, 2400)", (year,))
     
-    c.execute("""
-        INSERT INTO admission_data (year, university, specialization, admission_type, round_type, is_final_result, score)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (
-        year,
-        data.get("university"),
-        data.get("specialization"),
-        data.get("admission_type"),
-        round_type,
-        is_final,
-        data.get("score")
-    ))
-    new_id = c.lastrowid
+    added_ids = []
+    spec = data.get("specialization", "").strip()
+    adm_type = data.get("admission_type")
+    score = float(data.get("score"))
+
+    for u in cleaned_unis:
+        c.execute("""
+            INSERT INTO admission_data (year, university, specialization, admission_type, round_type, is_final_result, score)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            year,
+            u,
+            spec,
+            adm_type,
+            round_type,
+            is_final,
+            score
+        ))
+        added_ids.append(c.lastrowid)
+
     conn.commit()
     conn.close()
-    return jsonify({"success": True, "id": new_id})
+    return jsonify({"success": True, "ids": added_ids, "count": len(added_ids), "id": added_ids[0] if added_ids else None})
 
 @app.route("/api/records/<int:rec_id>", methods=["PUT"])
 @login_required
@@ -1829,6 +1911,11 @@ def api_update_record(rec_id):
     is_final = 1 if round_type == "إعلان نتيجة" else 0
     year = int(data.get("year"))
 
+    uni = data.get("university") or (data.get("universities")[0] if data.get("universities") else "")
+    if isinstance(uni, list):
+        uni = uni[0]
+    uni = str(uni).strip()
+
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("INSERT OR IGNORE INTO year_settings (year, max_score) VALUES (?, 2400)", (year,))
@@ -1838,12 +1925,12 @@ def api_update_record(rec_id):
         WHERE id = ?
     """, (
         year,
-        data.get("university"),
-        data.get("specialization"),
+        uni,
+        data.get("specialization", "").strip(),
         data.get("admission_type"),
         round_type,
         is_final,
-        data.get("score"),
+        float(data.get("score")),
         rec_id
     ))
     conn.commit()
