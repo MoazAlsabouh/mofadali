@@ -839,18 +839,29 @@ HTML_TEMPLATE = """
 
                 <div>
                     <label class="block text-xs font-bold text-slate-400 mb-1">اسم الاختصاص / الكلية / المعهد *</label>
-                    <input type="text" id="formSpec" required list="specializationList" placeholder="مثال: الهندسة المعلوماتية، المعهد التقاني للحاسوب..."
-                           class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
-                    <datalist id="specializationList">
-                        <option value="الهندسة المعلوماتية"></option>
-                        <option value="هندسة الحواسيب واألتمتة"></option>
-                        <option value="هندسة الحواسيب"></option>
-                        <option value="هندسة التحكم اآللي والحواسيب"></option>
-                        <option value="الكلية التطبيقية (تقنيات حاسوب)"></option>
-                        <option value="المعهد التقاني للحاسوب"></option>
-                        <option value="هندسة االتصاالت واإللكترونيات"></option>
-                        <option value="الهندسة التقنية (أتمتة صناعية)"></option>
-                    </datalist>
+                    <select id="formSpecSelect" onchange="onSpecSelectChange()" required
+                            class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
+                        <option value="الهندسة المعلوماتية">الهندسة المعلوماتية</option>
+                        <option value="هندسة الحواسيب">هندسة الحواسيب</option>
+                        <option value="هندسة الحواسيب والأتمتة">هندسة الحواسيب والأتمتة</option>
+                        <option value="هندسة التحكم الآلي والحواسيب">هندسة التحكم الآلي والحواسيب</option>
+                        <option value="هندسة الاتصالات والإلكترونيات">هندسة الاتصالات والإلكترونيات</option>
+                        <option value="هندسة تكنولوجيا المعلومات والاتصالات">هندسة تكنولوجيا المعلومات والاتصالات</option>
+                        <option value="الكلية التطبيقية (تقنيات حاسوب)">الكلية التطبيقية (تقنيات حاسوب)</option>
+                        <option value="المعهد التقاني للحاسوب">المعهد التقاني للحاسوب</option>
+                        <option value="الهندسة التقنية (أتمتة صناعية)">الهندسة التقنية (أتمتة صناعية)</option>
+                        <option value="الهندسة الطبية">الهندسة الطبية</option>
+                        <option value="الهندسة الميكانيكية والكهربائية">الهندسة الميكانيكية والكهربائية</option>
+                        <option value="الهندسة المدنية">الهندسة المدنية</option>
+                        <option value="الهندسة المعمارية">الهندسة المعمارية</option>
+                        <option value="__custom__" class="text-amber-400 font-bold">✨ خيار آخر (كتابة اسم تخصص / كلية غير موجود أعلاه)...</option>
+                    </select>
+
+                    <div id="customSpecContainer" class="hidden mt-2 space-y-1">
+                        <label class="block text-[11px] font-bold text-amber-400">اكتب اسم الاختصاص أو الكلية غير الموجود في القائمة:</label>
+                        <input type="text" id="formCustomSpec" placeholder="مثال: هندسة الذكاء الاصطناعي، الأمن السيبراني، المعهد التقاني الهندسي..."
+                               class="w-full p-2.5 text-sm bg-slate-950 border border-amber-500/60 text-amber-200 rounded-xl focus:ring-1 focus:ring-amber-500 focus:outline-none placeholder:text-slate-600">
+                    </div>
                 </div>
 
                 <div class="pt-4 border-t border-slate-800 flex items-center justify-end gap-2">
@@ -1361,6 +1372,42 @@ HTML_TEMPLATE = """
             });
         }
 
+        function onSpecSelectChange() {
+            const sel = document.getElementById('formSpecSelect');
+            const container = document.getElementById('customSpecContainer');
+            const customInput = document.getElementById('formCustomSpec');
+            if (sel.value === '__custom__') {
+                container.classList.remove('hidden');
+                customInput.focus();
+            } else {
+                container.classList.add('hidden');
+            }
+        }
+
+        function setSpecValueInForm(specName) {
+            const sel = document.getElementById('formSpecSelect');
+            const container = document.getElementById('customSpecContainer');
+            const customInput = document.getElementById('formCustomSpec');
+            
+            let exists = false;
+            for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === specName) {
+                    sel.selectedIndex = i;
+                    exists = true;
+                    break;
+                }
+            }
+            
+            if (exists) {
+                container.classList.add('hidden');
+                customInput.value = '';
+            } else {
+                sel.value = '__custom__';
+                container.classList.remove('hidden');
+                customInput.value = specName || '';
+            }
+        }
+
         function quickAddFromMatrix(year, uniEnc, specEnc, admType, roundType) {
             openAddModal();
             document.getElementById('formYear').value = year;
@@ -1376,7 +1423,7 @@ HTML_TEMPLATE = """
             if (!matched) {
                 document.getElementById('formCustomUniversity').value = targetUni;
             }
-            document.getElementById('formSpec').value = decodeURIComponent(specEnc);
+            setSpecValueInForm(decodeURIComponent(specEnc));
             document.getElementById('formAdmType').value = admType;
             document.getElementById('formRoundType').value = roundType || 'إعلان نتيجة';
             updateModalPercentage();
@@ -1396,7 +1443,7 @@ HTML_TEMPLATE = """
             
             selectAllModalUnis(false);
             document.getElementById('formCustomUniversity').value = '';
-            document.getElementById('formSpec').value = '';
+            setSpecValueInForm('الهندسة المعلوماتية');
             document.getElementById('formScore').value = '';
             updateModalPercentage();
             document.getElementById('recordModal').classList.remove('hidden');
@@ -1430,7 +1477,7 @@ HTML_TEMPLATE = """
             });
             document.getElementById('formCustomUniversity').value = matched ? '' : rec.university;
 
-            document.getElementById('formSpec').value = rec.specialization;
+            setSpecValueInForm(rec.specialization);
             document.getElementById('formScore').value = rec.score;
             updateModalPercentage();
             document.getElementById('recordModal').classList.remove('hidden');
@@ -1457,13 +1504,25 @@ HTML_TEMPLATE = """
                 return;
             }
 
+            // Determine specialization name
+            let specName = document.getElementById('formSpecSelect').value;
+            if (specName === '__custom__') {
+                specName = document.getElementById('formCustomSpec').value.trim();
+            }
+
+            if (!specName) {
+                DarkSwal.fire('تنبيه', 'يرجى كتابة أو اختيار اسم الاختصاص / الكلية', 'warning');
+                document.getElementById('formCustomSpec').focus();
+                return;
+            }
+
             const payload = {
                 year: yearVal,
                 admission_type: document.getElementById('formAdmType').value,
                 round_type: document.getElementById('formRoundType').value,
                 universities: selectedUnis,
                 university: selectedUnis[0],
-                specialization: document.getElementById('formSpec').value.trim(),
+                specialization: specName,
                 score: parseFloat(document.getElementById('formScore').value)
             };
 
