@@ -899,6 +899,10 @@ def api_delete_record(rec_id):
     conn.close()
     return jsonify({"success": True})
 
+@app.route("/healthz")
+def healthz():
+    return jsonify({"status": "healthy"}), 200
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"Starting Mofadala Curated Dashboard at http://localhost:{port}")
