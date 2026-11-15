@@ -66,13 +66,30 @@ def get_scanned_and_empty_files():
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="ar" dir="rtl" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>لوحة تنقيح وإدارة بيانات المفاضلات الجامعية (2014 - 2026)</title>
-    <!-- Tailwind CSS CDN -->
+    <!-- Tailwind CSS CDN with dark mode config -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#ecfdf5',
+                            500: '#10b981',
+                            600: '#059669',
+                            700: '#047857'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Google Fonts: Cairo -->
@@ -83,30 +100,45 @@ HTML_TEMPLATE = """
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
         body { font-family: 'Cairo', sans-serif; }
+        /* Custom scrollbars for dark mode */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #090d16;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
+        }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-emerald-500 selection:text-white">
 
     <!-- Header -->
-    <header class="bg-gradient-to-r from-emerald-800 via-teal-900 to-slate-900 text-white shadow-xl sticky top-0 z-40">
+    <header class="bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-950 text-white shadow-xl border-b border-slate-800/80 sticky top-0 z-40">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
             <div class="flex items-center gap-3">
-                <div class="bg-emerald-500/20 p-3 rounded-2xl backdrop-blur-md border border-emerald-400/30">
-                    <i class="fa-solid fa-pen-to-square text-3xl text-emerald-300"></i>
+                <div class="bg-emerald-500/10 p-3 rounded-2xl backdrop-blur-md border border-emerald-500/30">
+                    <i class="fa-solid fa-graduation-cap text-3xl text-emerald-400"></i>
                 </div>
                 <div>
-                    <h1 class="text-2xl font-black tracking-wide">لوحة تنقيح وإدارة بيانات المفاضلات</h1>
-                    <p class="text-xs text-emerald-200/90 font-medium">مراجعة، تعديل يدوي، وإضافة السجلات غير المقروءة (2014 - 2026)</p>
+                    <h1 class="text-2xl font-black tracking-wide text-white">لوحة تنقيح وإدارة بيانات المفاضلات</h1>
+                    <p class="text-xs text-emerald-300/80 font-medium">مراجعة، تعديل يدوي، وإضافة السجلات غير المقروءة (2014 - 2026)</p>
                 </div>
             </div>
             
             <div class="flex items-center gap-2">
-                <button onclick="openAddModal()" class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2">
+                <button onclick="openAddModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-emerald-950/50 transition-all flex items-center gap-2">
                     <i class="fa-solid fa-plus-circle text-base"></i>
                     <span>إضافة اختصاص يدوي</span>
                 </button>
 
-                <button onclick="exportCSV()" class="bg-white/10 hover:bg-white/20 text-white font-semibold text-xs px-3.5 py-2.5 rounded-xl border border-white/20 transition-all flex items-center gap-1.5">
+                <button onclick="exportCSV()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs px-3.5 py-2.5 rounded-xl border border-slate-700 transition-all flex items-center gap-1.5">
                     <i class="fa-solid fa-file-excel text-emerald-400"></i>
                     <span>تصدير Excel</span>
                 </button>
@@ -115,19 +147,19 @@ HTML_TEMPLATE = """
     </header>
 
     <!-- Navigation Tabs -->
-    <div class="bg-white border-b border-slate-200 shadow-sm sticky top-[73px] z-30">
+    <div class="bg-slate-900/90 backdrop-blur border-b border-slate-800 shadow-sm sticky top-[73px] z-30">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-6 text-sm font-bold">
-            <button onclick="switchTab('data-tab')" id="btn-data-tab" class="py-3.5 border-b-2 border-emerald-600 text-emerald-700 flex items-center gap-2 transition-colors">
+            <button onclick="switchTab('data-tab')" id="btn-data-tab" class="py-3.5 border-b-2 border-emerald-500 text-emerald-400 flex items-center gap-2 transition-colors">
                 <i class="fa-solid fa-table-list"></i>
                 <span>جدول السجلات والبيانات</span>
-                <span id="tabTotalBadge" class="bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5 rounded-full font-black">{{ stats.total }}</span>
+                <span id="tabTotalBadge" class="bg-emerald-950 text-emerald-300 border border-emerald-800/80 text-xs px-2 py-0.5 rounded-full font-black">{{ stats.total }}</span>
             </button>
-            <button onclick="switchTab('manual-tab')" id="btn-manual-tab" class="py-3.5 border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center gap-2 transition-colors">
+            <button onclick="switchTab('manual-tab')" id="btn-manual-tab" class="py-3.5 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 transition-colors">
                 <i class="fa-solid fa-file-circle-question"></i>
                 <span>مساعد الملفات الممسوحة ضوئياً</span>
-                <span class="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-black">4 ملفات</span>
+                <span class="bg-amber-950 text-amber-300 border border-amber-800/80 text-xs px-2 py-0.5 rounded-full font-black">4 ملفات</span>
             </button>
-            <button onclick="switchTab('chart-tab')" id="btn-chart-tab" class="py-3.5 border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center gap-2 transition-colors">
+            <button onclick="switchTab('chart-tab')" id="btn-chart-tab" class="py-3.5 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 transition-colors">
                 <i class="fa-solid fa-chart-line"></i>
                 <span>المخطط البياني والتطور</span>
             </button>
@@ -140,30 +172,30 @@ HTML_TEMPLATE = """
         <!-- TAB 1: DATA TABLE -->
         <div id="data-tab" class="space-y-6">
             <!-- Filter Controls -->
-            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
-                <div class="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <h2 class="font-bold text-slate-800 text-sm flex items-center gap-2">
-                        <i class="fa-solid fa-sliders text-emerald-600"></i>
+            <div class="bg-slate-900 p-5 rounded-2xl shadow-lg border border-slate-800 space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                    <h2 class="font-bold text-slate-200 text-sm flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-emerald-400"></i>
                         أدوات البحث والفلترة السريعة
                     </h2>
-                    <button onclick="resetFilters()" class="text-xs text-rose-600 hover:text-rose-700 font-semibold flex items-center gap-1 hover:underline">
+                    <button onclick="resetFilters()" class="text-xs text-rose-400 hover:text-rose-300 font-semibold flex items-center gap-1 hover:underline">
                         <i class="fa-solid fa-rotate-left"></i> تفريغ الفلاتر
                     </button>
                 </div>
 
                 <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     <div class="lg:col-span-1">
-                        <label class="block text-xs font-bold text-slate-600 mb-1">بحث في التخصص / الجامعة</label>
+                        <label class="block text-xs font-bold text-slate-400 mb-1">بحث في التخصص / الجامعة</label>
                         <div class="relative">
-                            <i class="fa-solid fa-search absolute right-3 top-3 text-slate-400 text-sm"></i>
+                            <i class="fa-solid fa-search absolute right-3 top-3 text-slate-500 text-sm"></i>
                             <input type="text" id="searchInput" placeholder="معلوماتية، تقاني..." oninput="applyFilters()"
-                                   class="w-full pr-9 pl-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                                   class="w-full pr-9 pl-3 py-2 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                         </div>
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-slate-600 mb-1">السنة الدراسية</label>
-                        <select id="yearSelect" onchange="applyFilters()" class="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        <label class="block text-xs font-bold text-slate-400 mb-1">السنة الدراسية</label>
+                        <select id="yearSelect" onchange="applyFilters()" class="w-full p-2 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                             <option value="">جميع السنوات (2014 - 2026)</option>
                             {% for y in years %}
                             <option value="{{ y }}">{{ y }}</option>
@@ -172,8 +204,8 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-slate-600 mb-1">الجامعة</label>
-                        <select id="uniSelect" onchange="applyFilters()" class="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        <label class="block text-xs font-bold text-slate-400 mb-1">الجامعة</label>
+                        <select id="uniSelect" onchange="applyFilters()" class="w-full p-2 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                             <option value="">جميع الجامعات</option>
                             {% for u in universities %}
                             <option value="{{ u }}">{{ u }}</option>
@@ -182,8 +214,8 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-slate-600 mb-1">نوع القبول</label>
-                        <select id="typeSelect" onchange="applyFilters()" class="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        <label class="block text-xs font-bold text-slate-400 mb-1">نوع القبول</label>
+                        <select id="typeSelect" onchange="applyFilters()" class="w-full p-2 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                             <option value="">عام وموازي</option>
                             <option value="عام">عام فقط</option>
                             <option value="موازي">موازي فقط</option>
@@ -191,8 +223,8 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-slate-600 mb-1">حالة الوثيقة</label>
-                        <select id="statusSelect" onchange="applyFilters()" class="w-full p-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        <label class="block text-xs font-bold text-slate-400 mb-1">حالة الوثيقة</label>
+                        <select id="statusSelect" onchange="applyFilters()" class="w-full p-2 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                             <option value="">الكل (شروط + نتائج فعلية)</option>
                             <option value="1">الحدود الدنيا والنتائج الفعلية</option>
                             <option value="0">إعلانات شروط التقدم المبدئية</option>
@@ -202,20 +234,20 @@ HTML_TEMPLATE = """
             </div>
 
             <!-- Data Table -->
-            <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
-                <div class="px-6 py-4 bg-slate-50/70 border-b border-slate-200/80 flex items-center justify-between">
+            <div class="bg-slate-900 rounded-2xl shadow-lg border border-slate-800 overflow-hidden">
+                <div class="px-6 py-4 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between">
                     <div class="flex items-center gap-2">
-                        <h3 class="font-bold text-slate-800">السجلات المستخرجة والمعدلة</h3>
-                        <span id="filteredCountBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold"></span>
+                        <h3 class="font-bold text-slate-200">السجلات المستخرجة والمعدلة</h3>
+                        <span id="filteredCountBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800/80 font-bold"></span>
                     </div>
-                    <div class="text-xs text-slate-500">
+                    <div class="text-xs text-slate-400">
                         يمكنك تعديل أي علامة أو حذف أي سطر مباشرة من أزرار الإجراءات
                     </div>
                 </div>
 
                 <div class="overflow-x-auto">
                     <table class="w-full text-right text-sm">
-                        <thead class="bg-slate-100/70 text-slate-700 text-xs font-black border-b border-slate-200">
+                        <thead class="bg-slate-950/80 text-slate-400 text-xs font-black border-b border-slate-800">
                             <tr>
                                 <th class="py-3 px-3 text-center">#</th>
                                 <th class="py-3 px-3">السنة</th>
@@ -227,19 +259,19 @@ HTML_TEMPLATE = """
                                 <th class="py-3 px-3 text-center">الإجراءات</th>
                             </tr>
                         </thead>
-                        <tbody id="tableBody" class="divide-y divide-slate-100">
+                        <tbody id="tableBody" class="divide-y divide-slate-800/60">
                             <!-- Dynamic Rows -->
                         </tbody>
                     </table>
                 </div>
 
-                <div id="noDataMessage" class="hidden py-12 text-center text-slate-400">
+                <div id="noDataMessage" class="hidden py-12 text-center text-slate-500">
                     <i class="fa-solid fa-folder-open text-4xl mb-3"></i>
                     <p class="font-semibold text-sm">لم يتم العثور على أي بيانات مطابقة للفلاتر المحددة.</p>
                 </div>
 
                 <!-- Pagination -->
-                <div class="px-6 py-3.5 bg-slate-50/50 border-t border-slate-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+                <div class="px-6 py-3.5 bg-slate-950/50 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
                     <span id="pageInfo">عرض صفحة 1 من 1</span>
                     <div class="flex items-center gap-1.5" id="paginationControls"></div>
                 </div>
@@ -248,14 +280,14 @@ HTML_TEMPLATE = """
 
         <!-- TAB 2: MANUAL / SCANNED FILES ASSISTANT -->
         <div id="manual-tab" class="hidden space-y-6">
-            <div class="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 p-5 rounded-2xl">
+            <div class="bg-gradient-to-r from-amber-950/40 to-slate-900 border border-amber-800/60 p-5 rounded-2xl">
                 <div class="flex items-start gap-3">
-                    <div class="p-3 bg-amber-500 text-white rounded-xl text-xl shadow-md">
+                    <div class="p-3 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl text-xl shadow-md">
                         <i class="fa-solid fa-triangle-exclamation"></i>
                     </div>
                     <div>
-                        <h3 class="font-bold text-amber-900 text-base">مساعد استكمال الملفات الممسوحة ضوئياً (Scanned Documents)</h3>
-                        <p class="text-xs text-amber-800 leading-relaxed mt-1">
+                        <h3 class="font-bold text-amber-300 text-base">مساعد استكمال الملفات الممسوحة ضوئياً (Scanned Documents)</h3>
+                        <p class="text-xs text-amber-200/80 leading-relaxed mt-1">
                             الملفات المدرجة أدناه عبارة عن صور ممسوحة ضوئياً أو منشورات تيليغرام لم تحتوِ على نصوص رقمية قابلة للاستخراج الآلي المباشر.
                             يمكنك النقر على زر <strong>"إضافة بيانات لهذا الملف"</strong> لفتح نافذة الإدخال مع ملء السنة والبيانات الافتراضية تلقائياً لإدخال درجاتها في قاعدة البيانات بكل سرعة.
                         </p>
@@ -263,15 +295,15 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
-            <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
-                <div class="px-6 py-4 bg-slate-50/70 border-b border-slate-200/80 flex items-center justify-between">
-                    <h3 class="font-bold text-slate-800">قائمة ملفات المفاضلة التي تحتاج تدقيقاً أو إدخالاً يدوياً</h3>
-                    <span class="text-xs text-slate-500">إجمالي الملفات: {{ scanned_files|length }}</span>
+            <div class="bg-slate-900 rounded-2xl shadow-lg border border-slate-800 overflow-hidden">
+                <div class="px-6 py-4 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between">
+                    <h3 class="font-bold text-slate-200">قائمة ملفات المفاضلة التي تحتاج تدقيقاً أو إدخالاً يدوياً</h3>
+                    <span class="text-xs text-slate-400">إجمالي الملفات: {{ scanned_files|length }}</span>
                 </div>
 
                 <div class="overflow-x-auto">
                     <table class="w-full text-right text-sm">
-                        <thead class="bg-slate-100/70 text-slate-700 text-xs font-black border-b border-slate-200">
+                        <thead class="bg-slate-950/80 text-slate-400 text-xs font-black border-b border-slate-800">
                             <tr>
                                 <th class="py-3.5 px-4">اسم ملف الـ PDF</th>
                                 <th class="py-3.5 px-3 text-center">السنة</th>
@@ -280,33 +312,33 @@ HTML_TEMPLATE = """
                                 <th class="py-3.5 px-4 text-center">الإجراء السريع</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-slate-100">
+                        <tbody class="divide-y divide-slate-800/60">
                             {% for sf in scanned_files %}
-                            <tr class="hover:bg-slate-50/80 transition-colors">
-                                <td class="py-3.5 px-4 font-semibold text-slate-800 flex items-center gap-2">
+                            <tr class="hover:bg-slate-800/40 transition-colors">
+                                <td class="py-3.5 px-4 font-semibold text-slate-200 flex items-center gap-2">
                                     <i class="fa-solid fa-file-pdf text-rose-500 text-base"></i>
                                     <span>{{ sf.filename }}</span>
                                 </td>
-                                <td class="py-3.5 px-3 text-center font-bold text-slate-700">{{ sf.year or 'غير محدد' }}</td>
+                                <td class="py-3.5 px-3 text-center font-bold text-slate-300">{{ sf.year or 'غير محدد' }}</td>
                                 <td class="py-3.5 px-3 text-center">
-                                    <span class="text-xs px-2.5 py-0.5 rounded-full font-bold {% if sf.admission_type == 'عام' %}bg-blue-50 text-blue-700 border border-blue-200{% else %}bg-purple-50 text-purple-700 border border-purple-200{% endif %}">
+                                    <span class="text-xs px-2.5 py-0.5 rounded-full font-bold {% if sf.admission_type == 'عام' %}bg-blue-950/70 text-blue-300 border border-blue-800/60{% else %}bg-purple-950/70 text-purple-300 border border-purple-800/60{% endif %}">
                                         {{ sf.admission_type }}
                                     </span>
                                 </td>
                                 <td class="py-3.5 px-3 text-center">
                                     {% if sf.is_scanned %}
-                                    <span class="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-50 text-amber-700 border border-amber-200 flex items-center justify-center gap-1 w-max mx-auto">
+                                    <span class="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-950/70 text-amber-300 border border-amber-800/60 flex items-center justify-center gap-1 w-max mx-auto">
                                         <i class="fa-solid fa-image text-[10px]"></i> صورة ممسوحة ضوئياً
                                     </span>
                                     {% else %}
-                                    <span class="text-xs px-2.5 py-0.5 rounded-full font-bold bg-slate-100 text-slate-700">
+                                    <span class="text-xs px-2.5 py-0.5 rounded-full font-bold bg-slate-800 text-slate-300 border border-slate-700">
                                         مستخرج جزئياً
                                     </span>
                                     {% endif %}
                                 </td>
                                 <td class="py-3.5 px-4 text-center">
                                     <button onclick="prefillAddModal('{{ sf.year }}', '{{ sf.admission_type }}', {{ 1 if sf.is_final_result else 0 }})" 
-                                            class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 hover:text-emerald-800 text-xs font-bold px-3 py-1.5 rounded-lg border border-emerald-300 transition-colors flex items-center gap-1.5 mx-auto">
+                                            class="bg-emerald-950/60 hover:bg-emerald-900 text-emerald-300 hover:text-emerald-200 text-xs font-bold px-3 py-1.5 rounded-lg border border-emerald-700/60 transition-colors flex items-center gap-1.5 mx-auto">
                                         <i class="fa-solid fa-plus-circle"></i>
                                         <span>إضافة بيانات لهذا الملف</span>
                                     </button>
@@ -321,16 +353,16 @@ HTML_TEMPLATE = """
 
         <!-- TAB 3: CHART -->
         <div id="chart-tab" class="hidden space-y-6">
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80">
+            <div class="bg-slate-900 p-6 rounded-2xl shadow-lg border border-slate-800">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
                     <div>
-                        <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
-                            <i class="fa-solid fa-chart-area text-emerald-600"></i>
+                        <h3 class="font-bold text-slate-200 text-base flex items-center gap-2">
+                            <i class="fa-solid fa-chart-area text-emerald-400"></i>
                             منحنى تطور معدلات القبول الفعلي عبر السنوات (2014 - 2026)
                         </h3>
-                        <p class="text-xs text-slate-500 mt-1">يعكس المخطط متوسط الحدود الدنيا المسجلة لاختصاصات الهندسة والمعاهد التقانية</p>
+                        <p class="text-xs text-slate-400 mt-1">يعكس المخطط متوسط الحدود الدنيا المسجلة لاختصاصات الهندسة والمعاهد التقانية</p>
                     </div>
-                    <select id="chartSpecSelect" onchange="updateChart()" class="text-xs font-bold bg-slate-100 border border-slate-200 rounded-xl p-2.5 focus:ring-2 focus:ring-emerald-500">
+                    <select id="chartSpecSelect" onchange="updateChart()" class="text-xs font-bold bg-slate-950 text-slate-200 border border-slate-800 rounded-xl p-2.5 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500">
                         <option value="الهندسة المعلوماتية">الهندسة المعلوماتية</option>
                         <option value="هندسة الحواسيب">هندسة الحواسيب / الأتمتة</option>
                         <option value="الكلية التطبيقية">الكلية التطبيقية (تقنيات حاسوب)</option>
@@ -346,14 +378,14 @@ HTML_TEMPLATE = """
     </main>
 
     <!-- Modal: Add / Edit Record -->
-    <div id="recordModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-        <div class="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-100 overflow-hidden transform transition-all">
-            <div class="px-6 py-4 bg-gradient-to-r from-emerald-800 to-teal-900 text-white flex items-center justify-between">
-                <h3 id="modalTitle" class="font-black text-base flex items-center gap-2">
+    <div id="recordModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 rounded-3xl max-w-lg w-full shadow-2xl border border-slate-800 overflow-hidden transform transition-all text-slate-100">
+            <div class="px-6 py-4 bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-900 border-b border-slate-800 text-white flex items-center justify-between">
+                <h3 id="modalTitle" class="font-black text-base flex items-center gap-2 text-emerald-400">
                     <i class="fa-solid fa-pen-nib"></i>
                     <span>إضافة سجل جديد</span>
                 </h3>
-                <button onclick="closeModal()" class="text-white/70 hover:text-white text-lg">
+                <button onclick="closeModal()" class="text-slate-400 hover:text-white text-lg">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
@@ -363,14 +395,14 @@ HTML_TEMPLATE = """
 
                 <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">السنة الدراسية *</label>
+                        <label class="block text-xs font-bold text-slate-400 mb-1">السنة الدراسية *</label>
                         <input type="number" id="formYear" min="2010" max="2030" required placeholder="مثال: 2025"
-                               class="w-full p-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                               class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">نوع القبول *</label>
-                        <select id="formAdmType" required class="w-full p-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        <label class="block text-xs font-bold text-slate-400 mb-1">نوع القبول *</label>
+                        <select id="formAdmType" required class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                             <option value="عام">عام</option>
                             <option value="موازي">موازي</option>
                         </select>
@@ -379,9 +411,9 @@ HTML_TEMPLATE = """
 
                 <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">الجامعة *</label>
+                        <label class="block text-xs font-bold text-slate-400 mb-1">الجامعة *</label>
                         <input type="text" id="formUniversity" required list="universitiesList" placeholder="جامعة دمشق، حلب..."
-                               class="w-full p-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                               class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                         <datalist id="universitiesList">
                             {% for u in universities %}
                             <option value="{{ u }}"></option>
@@ -397,16 +429,16 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">العلامة أو النسبة *</label>
+                        <label class="block text-xs font-bold text-slate-400 mb-1">العلامة أو النسبة *</label>
                         <input type="number" step="0.1" id="formScore" min="50" max="3200" required placeholder="مثال: 2310"
-                               class="w-full p-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none font-bold text-emerald-700">
+                               class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-emerald-400 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none font-bold">
                     </div>
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">اسم الاختصاص / الكلية / المعهد *</label>
+                    <label class="block text-xs font-bold text-slate-400 mb-1">اسم الاختصاص / الكلية / المعهد *</label>
                     <input type="text" id="formSpec" required list="specializationList" placeholder="مثال: الهندسة المعلوماتية، المعهد التقاني للحاسوب..."
-                           class="w-full p-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                           class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                     <datalist id="specializationList">
                         <option value="الهندسة المعلوماتية"></option>
                         <option value="هندسة الحواسيب واألتمتة"></option>
@@ -420,18 +452,18 @@ HTML_TEMPLATE = """
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">نوع الوثيقة / الحالة *</label>
-                    <select id="formIsFinal" required class="w-full p-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                    <label class="block text-xs font-bold text-slate-400 mb-1">نوع الوثيقة / الحالة *</label>
+                    <select id="formIsFinal" required class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-slate-100 rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                         <option value="1">النتيجة والحد الأدنى الفعلي للمفاضلة (Final Cutoff)</option>
                         <option value="0">إعلان شروط التقدم المبدئي (Initial Threshold)</option>
                     </select>
                 </div>
 
-                <div class="pt-4 border-t border-slate-100 flex items-center justify-end gap-2">
-                    <button type="button" onclick="closeModal()" class="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors">
+                <div class="pt-4 border-t border-slate-800 flex items-center justify-end gap-2">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 bg-slate-800 rounded-xl hover:bg-slate-700 transition-colors">
                         إلغاء
                     </button>
-                    <button type="submit" class="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md transition-colors flex items-center gap-1.5">
+                    <button type="submit" class="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl shadow-md transition-colors flex items-center gap-1.5">
                         <i class="fa-solid fa-save"></i>
                         <span>حفظ السجل في قاعدة البيانات</span>
                     </button>
@@ -447,6 +479,14 @@ HTML_TEMPLATE = """
         let currentPage = 1;
         const pageSize = 20;
         let chartInstance = null;
+
+        // Custom SweetAlert2 Dark Theme Defaults
+        const DarkSwal = Swal.mixin({
+            background: '#0f172a',
+            color: '#f8fafc',
+            confirmButtonColor: '#059669',
+            cancelButtonColor: '#475569'
+        });
 
         document.addEventListener('DOMContentLoaded', async () => {
             await loadData();
@@ -470,14 +510,14 @@ HTML_TEMPLATE = """
             ['data-tab', 'manual-tab', 'chart-tab'].forEach(id => {
                 document.getElementById(id).classList.add('hidden');
                 const btn = document.getElementById(`btn-${id}`);
-                btn.classList.remove('border-emerald-600', 'text-emerald-700');
-                btn.classList.add('border-transparent', 'text-slate-500');
+                btn.classList.remove('border-emerald-500', 'text-emerald-400');
+                btn.classList.add('border-transparent', 'text-slate-400');
             });
 
             document.getElementById(tabId).classList.remove('hidden');
             const activeBtn = document.getElementById(`btn-${tabId}`);
-            activeBtn.classList.remove('border-transparent', 'text-slate-500');
-            activeBtn.classList.add('border-emerald-600', 'text-emerald-700');
+            activeBtn.classList.remove('border-transparent', 'text-slate-400');
+            activeBtn.classList.add('border-emerald-500', 'text-emerald-400');
 
             if (tabId === 'chart-tab') {
                 setTimeout(updateChart, 50);
@@ -535,28 +575,28 @@ HTML_TEMPLATE = """
             tbody.innerHTML = pageRows.map((r, i) => {
                 const isAam = r.admission_type === 'عام';
                 const typeBadge = isAam
-                    ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">عام</span>`
-                    : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200">موازي</span>`;
+                    ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-blue-950/70 text-blue-300 border border-blue-800/60">عام</span>`
+                    : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-purple-950/70 text-purple-300 border border-purple-800/60">موازي</span>`;
 
                 const statusBadge = r.is_final_result
-                    ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"><i class="fa-solid fa-check-double ml-1 text-[10px]"></i> نتيجة فعلية</span>`
-                    : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200"><i class="fa-solid fa-clock ml-1 text-[10px]"></i> شرط تقدم</span>`;
+                    ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"><i class="fa-solid fa-check-double ml-1 text-[10px]"></i> نتيجة فعلية</span>`
+                    : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-950/70 text-amber-300 border border-amber-800/60"><i class="fa-solid fa-clock ml-1 text-[10px]"></i> شرط تقدم</span>`;
 
                 return `
-                    <tr class="hover:bg-slate-50/80 transition-colors">
-                        <td class="py-3 px-3 text-center text-xs font-semibold text-slate-400">${start + i + 1}</td>
-                        <td class="py-3 px-3 font-bold text-slate-800">${r.year}</td>
-                        <td class="py-3 px-3 font-semibold text-slate-800">${r.university}</td>
-                        <td class="py-3 px-4 text-slate-700 font-medium">${r.specialization}</td>
+                    <tr class="hover:bg-slate-800/40 transition-colors">
+                        <td class="py-3 px-3 text-center text-xs font-semibold text-slate-500">${start + i + 1}</td>
+                        <td class="py-3 px-3 font-bold text-slate-200">${r.year}</td>
+                        <td class="py-3 px-3 font-semibold text-slate-300">${r.university}</td>
+                        <td class="py-3 px-4 text-slate-200 font-medium">${r.specialization}</td>
                         <td class="py-3 px-3 text-center">${typeBadge}</td>
                         <td class="py-3 px-3 text-center">${statusBadge}</td>
-                        <td class="py-3 px-3 text-center font-black text-emerald-700 text-base">${r.score}</td>
+                        <td class="py-3 px-3 text-center font-black text-emerald-400 text-base">${r.score}</td>
                         <td class="py-3 px-3 text-center">
                             <div class="flex items-center justify-center gap-1.5">
-                                <button onclick="openEditModal(${r.id})" title="تعديل السطر" class="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors">
+                                <button onclick="openEditModal(${r.id})" title="تعديل السطر" class="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-950/60 rounded-lg transition-colors">
                                     <i class="fa-solid fa-pen text-xs"></i>
                                 </button>
-                                <button onclick="deleteRecord(${r.id})" title="حذف السطر" class="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors">
+                                <button onclick="deleteRecord(${r.id})" title="حذف السطر" class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/60 rounded-lg transition-colors">
                                     <i class="fa-solid fa-trash-can text-xs"></i>
                                 </button>
                             </div>
@@ -575,10 +615,10 @@ HTML_TEMPLATE = """
 
             let html = '';
             if (currentPage > 1) {
-                html += `<button onclick="goToPage(${currentPage - 1})" class="px-2.5 py-1 bg-white border border-slate-200 rounded-md hover:bg-slate-100 font-bold">&laquo; السابق</button>`;
+                html += `<button onclick="goToPage(${currentPage - 1})" class="px-2.5 py-1 bg-slate-800 border border-slate-700 text-slate-300 rounded-md hover:bg-slate-700 font-bold">&laquo; السابق</button>`;
             }
             if (currentPage < totalPages) {
-                html += `<button onclick="goToPage(${currentPage + 1})" class="px-2.5 py-1 bg-white border border-slate-200 rounded-md hover:bg-slate-100 font-bold">التالي &raquo;</button>`;
+                html += `<button onclick="goToPage(${currentPage + 1})" class="px-2.5 py-1 bg-slate-800 border border-slate-700 text-slate-300 rounded-md hover:bg-slate-700 font-bold">التالي &raquo;</button>`;
             }
             controls.innerHTML = html;
         }
@@ -590,7 +630,7 @@ HTML_TEMPLATE = """
 
         // Modal Operations (Add / Edit)
         function openAddModal() {
-            document.getElementById('modalTitle').innerHTML = '<i class="fa-solid fa-plus-circle"></i> إضافة اختصاص جديد لقاعدة البيانات';
+            document.getElementById('modalTitle').innerHTML = '<i class="fa-solid fa-plus-circle text-emerald-400"></i> إضافة اختصاص جديد لقاعدة البيانات';
             document.getElementById('recordId').value = '';
             document.getElementById('formYear').value = new Date().getFullYear();
             document.getElementById('formAdmType').value = 'عام';
@@ -612,7 +652,7 @@ HTML_TEMPLATE = """
             const rec = allData.find(r => r.id === id);
             if (!rec) return;
 
-            document.getElementById('modalTitle').innerHTML = '<i class="fa-solid fa-pen-to-square"></i> تعديل بيانات السجل';
+            document.getElementById('modalTitle').innerHTML = '<i class="fa-solid fa-pen-to-square text-emerald-400"></i> تعديل بيانات السجل';
             document.getElementById('recordId').value = rec.id;
             document.getElementById('formYear').value = rec.year;
             document.getElementById('formAdmType').value = rec.admission_type;
@@ -651,7 +691,7 @@ HTML_TEMPLATE = """
                 const result = await res.json();
                 if (result.success) {
                     closeModal();
-                    Swal.fire({
+                    DarkSwal.fire({
                         title: id ? 'تم التعديل بنجاح!' : 'تمت الإضافة بنجاح!',
                         text: 'تم تحديث قاعدة البيانات SQLite فورياً.',
                         icon: 'success',
@@ -661,21 +701,21 @@ HTML_TEMPLATE = """
                     await loadData();
                     updateChart();
                 } else {
-                    Swal.fire('خطأ', result.error || 'تعذر حفظ السجل', 'error');
+                    DarkSwal.fire('خطأ', result.error || 'تعذر حفظ السجل', 'error');
                 }
             } catch (err) {
-                Swal.fire('خطأ', 'حدث خطأ في الاتصال بالخادم', 'error');
+                DarkSwal.fire('خطأ', 'حدث خطأ في الاتصال بالخادم', 'error');
             }
         }
 
         async function deleteRecord(id) {
-            const confirm = await Swal.fire({
+            const confirm = await DarkSwal.fire({
                 title: 'هل أنت متأكد من الحذف؟',
                 text: 'سيتم حذف هذا السطر نهائياً من قاعدة البيانات!',
                 icon: 'warning',
                 showCancelButton: true,
                 confirmButtonColor: '#e11d48',
-                cancelButtonColor: '#64748b',
+                cancelButtonColor: '#475569',
                 confirmButtonText: 'نعم، احذفه',
                 cancelButtonText: 'إلغاء'
             });
@@ -686,7 +726,7 @@ HTML_TEMPLATE = """
                 const res = await fetch(`/api/records/${id}`, { method: 'DELETE' });
                 const result = await res.json();
                 if (result.success) {
-                    Swal.fire({
+                    DarkSwal.fire({
                         title: 'تم الحذف!',
                         icon: 'success',
                         timer: 1200,
@@ -696,7 +736,7 @@ HTML_TEMPLATE = """
                     updateChart();
                 }
             } catch (err) {
-                Swal.fire('خطأ', 'تعذر حذف السجل', 'error');
+                DarkSwal.fire('خطأ', 'تعذر حذف السجل', 'error');
             }
         }
 
@@ -730,24 +770,26 @@ HTML_TEMPLATE = """
                     datasets: [
                         {
                             label: 'الحد الأدنى الفعلي - عام',
-                            borderColor: '#059669',
-                            backgroundColor: 'rgba(5, 150, 105, 0.1)',
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.15)',
                             data: [],
                             fill: true,
                             tension: 0.3,
                             borderWidth: 3,
-                            pointRadius: 5
+                            pointRadius: 5,
+                            pointBackgroundColor: '#10b981'
                         },
                         {
                             label: 'الحد الأدنى الفعلي - موازي',
-                            borderColor: '#7c3aed',
-                            backgroundColor: 'rgba(124, 58, 237, 0.05)',
+                            borderColor: '#a855f7',
+                            backgroundColor: 'rgba(168, 85, 247, 0.1)',
                             data: [],
                             fill: true,
                             tension: 0.3,
                             borderWidth: 2,
                             borderDash: [5, 5],
-                            pointRadius: 4
+                            pointRadius: 4,
+                            pointBackgroundColor: '#a855f7'
                         }
                     ]
                 },
@@ -755,12 +797,46 @@ HTML_TEMPLATE = """
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: { position: 'top', rtl: true, labels: { font: { family: 'Cairo' } } },
-                        tooltip: { rtl: true, titleFont: { family: 'Cairo' }, bodyFont: { family: 'Cairo' } }
+                        legend: { 
+                            position: 'top', 
+                            rtl: true, 
+                            labels: { 
+                                font: { family: 'Cairo', weight: 'bold' },
+                                color: '#cbd5e1'
+                            } 
+                        },
+                        tooltip: { 
+                            rtl: true, 
+                            titleFont: { family: 'Cairo' }, 
+                            bodyFont: { family: 'Cairo' },
+                            backgroundColor: '#0f172a',
+                            borderColor: '#334155',
+                            borderWidth: 1,
+                            titleColor: '#f8fafc',
+                            bodyColor: '#cbd5e1'
+                        }
                     },
                     scales: {
-                        y: { min: 1000, max: 2500, ticks: { font: { family: 'Cairo' } } },
-                        x: { ticks: { font: { family: 'Cairo' } } }
+                        y: { 
+                            min: 1000, 
+                            max: 2500, 
+                            ticks: { 
+                                font: { family: 'Cairo' },
+                                color: '#94a3b8'
+                            },
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.06)'
+                            }
+                        },
+                        x: { 
+                            ticks: { 
+                                font: { family: 'Cairo' },
+                                color: '#94a3b8'
+                            },
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.06)'
+                            }
+                        }
                     }
                 }
             });
