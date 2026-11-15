@@ -818,13 +818,6 @@ HTML_TEMPLATE = """
                             {% for u in universities %}
                             <option value="{{ u }}"></option>
                             {% endfor %}
-                            <option value="جامعة دمشق"></option>
-                            <option value="جامعة حلب"></option>
-                            <option value="جامعة تشرين"></option>
-                            <option value="جامعة البعث"></option>
-                            <option value="جامعة حماة"></option>
-                            <option value="جامعة طرطوس"></option>
-                            <option value="جامعة الفرات"></option>
                         </datalist>
                     </div>
                 </div>
