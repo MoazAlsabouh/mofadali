@@ -792,10 +792,14 @@ HTML_TEMPLATE = """
                 <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-bold text-slate-400 mb-1">نوع الإعلان / المرحلة *</label>
-                        <select id="formRoundType" required class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-emerald-300 font-bold rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
+                        <select id="formRoundType" onchange="onRoundTypeChange()" required class="w-full p-2.5 text-sm bg-slate-950 border border-slate-800 text-emerald-300 font-bold rounded-xl focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 focus:outline-none">
                             <option value="إعلان نتيجة">إعلان نتيجة (الحد الأدنى الفعلي)</option>
                             <option value="مفاضلة أولى">مفاضلة أولى (شروط التقدم)</option>
                         </select>
+                        <div id="roundAutoPairNotice" class="hidden text-[11px] text-emerald-300 font-bold bg-emerald-950/40 p-2 mt-1.5 rounded-xl border border-emerald-800/60 leading-relaxed">
+                            <i class="fa-solid fa-wand-magic-sparkles text-emerald-400 ml-1"></i>
+                            سيتم فوراً إنشاء سجل "إعلان نتيجة" موازي لتعديله لاحقاً عند صدور النتائج وحساب فرق النسبة تلقائياً.
+                        </div>
                     </div>
 
                     <div>
@@ -812,6 +816,11 @@ HTML_TEMPLATE = """
                         <span>النسبة المئوية المحسوبة:</span>
                     </span>
                     <span id="modalPercentageValue" class="font-black text-amber-400 text-sm">--%</span>
+                </div>
+
+                <!-- Modal Pair Info Comparison Box -->
+                <div id="modalPairInfoBox" class="hidden p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs space-y-1.5">
+                    <!-- Populated dynamically when editing a paired record -->
                 </div>
 
                 <div class="col-span-2 space-y-2">
@@ -1069,6 +1078,31 @@ HTML_TEMPLATE = """
                     ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"><i class="fa-solid fa-check-double ml-1 text-[10px]"></i> إعلان نتيجة</span>`
                     : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-950/70 text-amber-300 border border-amber-800/60"><i class="fa-solid fa-list-check ml-1 text-[10px]"></i> مفاضلة أولى</span>`;
 
+                let diffBadge = '';
+                if (r.has_pair && r.diff_pct !== null && r.diff_pct !== undefined) {
+                    const isPlus = r.diff_pct > 0;
+                    const isMinus = r.diff_pct < 0;
+                    const sign = isPlus ? '+' : '';
+                    const colorClass = isPlus 
+                        ? 'text-emerald-400 bg-emerald-950/80 border-emerald-800/80' 
+                        : (isMinus ? 'text-rose-400 bg-rose-950/80 border-rose-800/80' : 'text-slate-300 bg-slate-800 border-slate-700');
+
+                    diffBadge = `
+                        <div class="mt-1 flex flex-col items-center gap-0.5">
+                            <span class="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.2 rounded border ${colorClass}"
+                                  title="مفاضلة أولى: ${r.first_score} (${r.first_pct}%) | إعلان النتيجة: ${r.result_score} (${r.result_pct}%) | فرق الدرجات: ${isPlus ? '+' : ''}${r.diff_score}">
+                                <span>فرق النسبة:</span>
+                                <span>${sign}${r.diff_pct}%</span>
+                            </span>
+                            ${!isFinal && r.paired_id ? `
+                                <button onclick="openEditModal(${r.paired_id})" class="text-[9px] text-amber-400 hover:text-amber-300 font-bold hover:underline" title="تعديل نتيجة القبول النهائية">
+                                    تعديل النتيجة &larr;
+                                </button>
+                            ` : ''}
+                        </div>
+                    `;
+                }
+
                 const maxScore = yearSettings[r.year] || r.max_score || 2400;
                 const percentage = ((r.score / maxScore) * 100).toFixed(2);
 
@@ -1079,7 +1113,10 @@ HTML_TEMPLATE = """
                         <td class="py-3 px-3 font-semibold text-slate-300">${r.university}</td>
                         <td class="py-3 px-4 text-slate-200 font-medium">${r.specialization}</td>
                         <td class="py-3 px-3 text-center">${typeBadge}</td>
-                        <td class="py-3 px-3 text-center">${roundBadge}</td>
+                        <td class="py-3 px-3 text-center">
+                            ${roundBadge}
+                            ${diffBadge}
+                        </td>
                         <td class="py-3 px-3 text-center">
                             <div class="inline-flex flex-col items-center">
                                 <span onclick="inlineEditScore(${r.id}, ${r.score})" title="انقر لتعديل العلامة فورياً" 
@@ -1430,6 +1467,17 @@ HTML_TEMPLATE = """
             document.getElementById('formScore').focus();
         }
 
+        function onRoundTypeChange() {
+            const isFirst = document.getElementById('formRoundType').value === 'مفاضلة أولى';
+            const isAdd = !document.getElementById('recordId').value;
+            const notice = document.getElementById('roundAutoPairNotice');
+            if (isFirst && isAdd) {
+                notice.classList.remove('hidden');
+            } else {
+                notice.classList.add('hidden');
+            }
+        }
+
         // Modal Operations (Add / Edit)
         function openAddModal() {
             document.getElementById('modalTitle').innerHTML = '<i class="fa-solid fa-plus-circle text-emerald-400"></i> إضافة اختصاص جديد لقاعدة البيانات';
@@ -1446,6 +1494,8 @@ HTML_TEMPLATE = """
             setSpecValueInForm('الهندسة المعلوماتية');
             document.getElementById('formScore').value = '';
             updateModalPercentage();
+            document.getElementById('modalPairInfoBox').classList.add('hidden');
+            onRoundTypeChange();
             document.getElementById('recordModal').classList.remove('hidden');
         }
 
@@ -1455,6 +1505,7 @@ HTML_TEMPLATE = """
             if (admType) document.getElementById('formAdmType').value = admType;
             if (roundType) document.getElementById('formRoundType').value = roundType;
             updateModalPercentage();
+            onRoundTypeChange();
         }
 
         function openEditModal(id) {
@@ -1480,6 +1531,30 @@ HTML_TEMPLATE = """
             setSpecValueInForm(rec.specialization);
             document.getElementById('formScore').value = rec.score;
             updateModalPercentage();
+
+            // Hide auto-pair notice in edit mode
+            document.getElementById('roundAutoPairNotice').classList.add('hidden');
+
+            // Show pair comparison box if paired
+            const pairBox = document.getElementById('modalPairInfoBox');
+            if (rec.has_pair && rec.diff_pct !== null && rec.diff_pct !== undefined) {
+                const isPlus = rec.diff_pct > 0;
+                const sign = isPlus ? '+' : '';
+                pairBox.innerHTML = `
+                    <div class="flex items-center justify-between text-slate-200 font-bold border-b border-slate-800 pb-1">
+                        <span class="flex items-center gap-1.5"><i class="fa-solid fa-scale-balanced text-amber-400"></i> مقارنة الإعلان والنتيجة:</span>
+                        <span class="${isPlus ? 'text-emerald-400' : 'text-rose-400'} font-black text-sm">فرق النسبة: ${sign}${rec.diff_pct}% (${isPlus ? '+' : ''}${rec.diff_score} درجة)</span>
+                    </div>
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                        <span>مفاضلة أولى: <strong class="text-amber-300 font-bold">${rec.first_score}</strong> (${rec.first_pct}%)</span>
+                        <span>إعلان نتيجة: <strong class="text-emerald-400 font-bold">${rec.result_score}</strong> (${rec.result_pct}%)</span>
+                    </div>
+                `;
+                pairBox.classList.remove('hidden');
+            } else {
+                pairBox.classList.add('hidden');
+            }
+
             document.getElementById('recordModal').classList.remove('hidden');
         }
 
@@ -1538,15 +1613,17 @@ HTML_TEMPLATE = """
                 const result = await res.json();
                 if (result.success) {
                     closeModal();
-                    const countMsg = (!id && selectedUnis.length > 1) 
-                        ? `تمت إضافة ${selectedUnis.length} سجلات لـ ${selectedUnis.length} جامعات بنجاح!` 
-                        : (id ? 'تم التعديل بنجاح!' : 'تمت الإضافة بنجاح!');
+                    const countMsg = result.is_first_round
+                        ? `تمت إضافة المفاضلة الأولى وإنشاء سجل إعلان النتيجة المقترن تلقائياً!`
+                        : (!id && selectedUnis.length > 1 
+                            ? `تمت إضافة ${selectedUnis.length} سجلات لـ ${selectedUnis.length} جامعات بنجاح!` 
+                            : (id ? 'تم التعديل بنجاح!' : 'تمت الإضافة بنجاح!'));
                     
                     DarkSwal.fire({
                         title: countMsg,
-                        text: `تم الحفظ وبقيت في بيانات سنة ${yearVal}.`,
+                        text: result.is_first_round ? `يمكنك الآن تعديل نتيجة القبول النهائية لحساب فرق النسبة مباشرة.` : `تم الحفظ وبقيت في بيانات سنة ${yearVal}.`,
                         icon: 'success',
-                        timer: 1600,
+                        timer: 2000,
                         showConfirmButton: false
                     });
                     
@@ -1597,10 +1674,11 @@ HTML_TEMPLATE = """
 
         function exportCSV() {
             if (!filteredData.length) return;
-            const headers = ["السنة", "الجامعة", "الاختصاص", "نوع القبول", "نوع الإعلان", "الحد الأدنى", "المجموع العام للسنة", "النسبة المئوية %"];
+            const headers = ["السنة", "الجامعة", "الاختصاص", "نوع القبول", "نوع الإعلان", "الحد الأدنى", "المجموع العام للسنة", "النسبة المئوية %", "فرق النسبة بين الإعلان والنتيجة %"];
             const rows = filteredData.map(r => {
                 const maxS = yearSettings[r.year] || r.max_score || 2400;
                 const pct = ((r.score / maxS) * 100).toFixed(2);
+                const diffStr = (r.has_pair && r.diff_pct !== null) ? `${r.diff_pct > 0 ? '+' : ''}${r.diff_pct}%` : '—';
                 return [
                     r.year,
                     `"${r.university}"`,
@@ -1609,7 +1687,8 @@ HTML_TEMPLATE = """
                     r.round_type,
                     r.score,
                     maxS,
-                    `${pct}%`
+                    `${pct}%`,
+                    diffStr
                 ];
             });
 
@@ -1869,13 +1948,43 @@ def api_data():
         LEFT JOIN year_settings s ON a.year = s.year
         ORDER BY a.year DESC, a.score DESC
     """)
+    raw_rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+
+    pairs_map = {}
     rows = []
-    for r in c.fetchall():
-        d = dict(r)
+    for d in raw_rows:
         max_s = d["max_score"] if d["max_score"] and d["max_score"] > 0 else 2400
         d["percentage"] = round((d["score"] / max_s) * 100, 2)
+        key = (d["year"], (d["university"] or "").strip(), (d["specialization"] or "").strip(), d["admission_type"])
+        if key not in pairs_map:
+            pairs_map[key] = {}
+        pairs_map[key][d["round_type"]] = d
         rows.append(d)
-    conn.close()
+
+    # احتساب فرق النسبة والدرجات بين المفاضلة الأولى وإعلان النتيجة لنفس التخصص
+    for d in rows:
+        key = (d["year"], (d["university"] or "").strip(), (d["specialization"] or "").strip(), d["admission_type"])
+        pair = pairs_map.get(key, {})
+        if "مفاضلة أولى" in pair and "إعلان نتيجة" in pair:
+            first_rec = pair["مفاضلة أولى"]
+            result_rec = pair["إعلان نتيجة"]
+            d["has_pair"] = True
+            diff_score = round(result_rec["score"] - first_rec["score"], 2)
+            diff_pct = round(result_rec["percentage"] - first_rec["percentage"], 2)
+            d["diff_score"] = diff_score
+            d["diff_pct"] = diff_pct
+            d["first_score"] = first_rec["score"]
+            d["first_pct"] = first_rec["percentage"]
+            d["result_score"] = result_rec["score"]
+            d["result_pct"] = result_rec["percentage"]
+            d["paired_id"] = result_rec["id"] if d["round_type"] == "مفاضلة أولى" else first_rec["id"]
+        else:
+            d["has_pair"] = False
+            d["diff_score"] = None
+            d["diff_pct"] = None
+            d["paired_id"] = None
+
     return jsonify(rows)
 
 @app.route("/api/matrix")
@@ -1962,7 +2071,10 @@ def api_add_record():
     adm_type = data.get("admission_type")
     score = float(data.get("score"))
 
+    is_first_round = (round_type == "مفاضلة أولى")
+
     for u in cleaned_unis:
+        # السجل الأساسي (المفاضلة الأولى أو إعلان النتيجة)
         c.execute("""
             INSERT INTO admission_data (year, university, specialization, admission_type, round_type, is_final_result, score)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1977,9 +2089,34 @@ def api_add_record():
         ))
         added_ids.append(c.lastrowid)
 
+        # عند إضافة "مفاضلة أولى"، ينشئ النظام فوراً السجل المقترن لـ "إعلان نتيجة" لتعديل نتيجته واحتساب فرق النسبة
+        if is_first_round:
+            c.execute("""
+                SELECT id FROM admission_data 
+                WHERE year = ? AND university = ? AND specialization = ? AND admission_type = ? AND round_type = 'إعلان نتيجة'
+            """, (year, u, spec, adm_type))
+            if not c.fetchone():
+                c.execute("""
+                    INSERT INTO admission_data (year, university, specialization, admission_type, round_type, is_final_result, score)
+                    VALUES (?, ?, ?, ?, 'إعلان نتيجة', 1, ?)
+                """, (
+                    year,
+                    u,
+                    spec,
+                    adm_type,
+                    score
+                ))
+                added_ids.append(c.lastrowid)
+
     conn.commit()
     conn.close()
-    return jsonify({"success": True, "ids": added_ids, "count": len(added_ids), "id": added_ids[0] if added_ids else None})
+    return jsonify({
+        "success": True, 
+        "ids": added_ids, 
+        "count": len(added_ids), 
+        "id": added_ids[0] if added_ids else None,
+        "is_first_round": is_first_round
+    })
 
 @app.route("/api/records/<int:rec_id>", methods=["PUT"])
 @login_required
